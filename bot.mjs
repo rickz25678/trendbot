@@ -37,7 +37,12 @@ const money = n => !n ? '?' : n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 
 // ---------- viral sources (outside crypto) ----------
 async function xTrends(region, label) {
   const html = await get(`https://trends24.in/${region}/`);
-  if (!html) return [];
+  if (!html) {
+    const alt = await get(`https://getdaytrends.com/${region}/`);
+    if (!alt) return [];
+    return [...new Set([...alt.matchAll(/href="\/[a-z-]+\/trend\/([^"\/]+)\/"/g)].map(m => decodeURIComponent(m[1])))].slice(0, 25)
+      .map(t => ({ title: t, src: `X trending ${label}` }));
+  }
   const firstCard = html.split('trend-card__list')[1] || html; // latest hour only
   return [...firstCard.matchAll(/class=trend-link>([^<]+)/g)].slice(0, 25)
     .map(m => ({ title: decode(m[1]), src: `X trending ${label}` }));
@@ -55,6 +60,11 @@ const NEWS_QUERIES = ['viral', 'goes viral animal', 'zoo baby animal', 'viral me
 async function googleNews(q) {
   const xml = await get(`https://news.google.com/rss/search?q=${encodeURIComponent(q + ' when:1d')}&hl=en-US&gl=US&ceid=US:en`);
   return items(xml).slice(0, 10).map(it => ({ title: tag(it, 'title'), link: tag(it, 'link'), src: 'Google News' }));
+}
+async function newsSequential() {
+  const out = [];
+  for (const q of NEWS_QUERIES) { out.push(...await googleNews(q)); await new Promise(r => setTimeout(r, 1500)); }
+  return out;
 }
 async function knowYourMeme() {
   const xml = await get('https://knowyourmeme.com/newsfeed.rss');
@@ -150,12 +160,19 @@ async function send(text) {
   }
   if (cur.trim()) parts.push(cur);
   for (const p of parts) {
-    const r = await fetch(`https://api.telegram.org/bot${t}/sendMessage`, {
+    let ok = false;
+    for (let attempt = 0; attempt < 4 && !ok; attempt++) {
+      if (attempt) await new Promise(r => setTimeout(r, 15000));
+      const r = await fetch(`https://api.telegram.org/bot${t}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: c, text: p, parse_mode: 'HTML', disable_web_page_preview: true }),
     });
-    if (!r.ok) console.error('telegram error', r.status, await r.text());
+      ok = r.ok;
+      if (!ok) console.error('telegram error', r.status, await r.text());
+    }
+    if (!ok) return false;
   }
+  return true;
 }
 
 // ---------- main ----------
@@ -168,7 +185,7 @@ async function main() {
   const viral = (await Promise.all([
     xTrends('united-states', 'US'), xTrends('united-kingdom', 'UK'),
     googleTrends('US'), googleTrends('GB'),
-    ...NEWS_QUERIES.map(googleNews), knowYourMeme(), bluesky(), wikipedia(),
+    newsSequential(), knowYourMeme(), bluesky(), wikipedia(),
   ])).flat().filter(c => c.title);
 
   // only things not seen in the last 3 days
@@ -206,8 +223,9 @@ async function main() {
 
   // send if there is something new to say (always send ideas; chain block only every 4h if nothing else)
   const quiet = !lines.length && !freshNews.length && new Date().getUTCHours() % 4 !== 0;
-  if (!quiet || process.argv.includes('--force')) await send(msg);
-  else console.error('quiet hour, nothing sent');
+  if (!quiet || process.argv.includes('--force')) {
+    if (!await send(msg)) { console.error('Telegram failed - not saving, will retry next hour'); process.exit(1); }
+  } else console.error('quiet hour, nothing sent');
 
   fs.mkdirSync(new URL('./state/', import.meta.url), { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state));
