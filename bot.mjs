@@ -179,7 +179,8 @@ async function gemini(prompt, model = MODEL, extra = {}) {
 }
 async function geminiJSON(prompt) {
   const parts = await gemini(prompt, MODEL, { generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } });
-  try { return JSON.parse(parts.map(p => p.text || '').join('')); } catch { return []; }
+  if (!parts) return null;
+  try { return JSON.parse(parts.map(p => p.text || '').join('')); } catch { return null; }
 }
 
 function learningNotes(state) {
@@ -226,7 +227,8 @@ Only include score 6 or higher.
 
 ${list}`;
   const res = await geminiJSON(prompt);
-  return (Array.isArray(res) ? res : []).filter(x => x.score >= 6 && cands[x.i])
+  if (!Array.isArray(res)) return null;
+  return (res ? res : []).filter(x => x.score >= 6 && cands[x.i])
     .map(x => ({ ...x, tickers: (x.tickers || []).map(t => String(t).replace(/^\$/, '').toUpperCase()).filter(Boolean).slice(0, 3), cand: cands[x.i] }));
 }
 
@@ -292,7 +294,11 @@ async function sendIdea(caption, image, id, loud) {
   if (printMode()) { console.log('\n[photo: ' + (image || 'none') + ']\n' + caption.replace(/<[^>]+>/g, '') + '\n'); return true; }
   const base = { chat_id: CHAT(), parse_mode: 'HTML', reply_markup: buttons(id), disable_notification: !loud };
   if (image) {
-    const r = await tg('sendPhoto', { ...base, photo: image, caption: caption.slice(0, 1024) });
+    const r = caption.length <= 1024 ? await tg('sendPhoto', { ...base, photo: image, caption }) : await (async () => {
+      // too long for a photo caption: photo first, full text below it
+      const p = await tg('sendPhoto', { chat_id: CHAT(), photo: image, disable_notification: !loud });
+      return p?.ok ? { ok: false } : p;
+    })();
     if (r?.ok) return true;
     if (r === null) return false;
   }
@@ -419,7 +425,7 @@ async function main() {
   state.trends ||= {}; state.ideas ||= {}; state.news ||= {}; state.judged ||= {}; state.feedback ||= [];
   if (!Array.isArray(state.feedback)) state.feedback = [];
   for (const k of ['trends', 'news', 'judged']) for (const [x, v] of Object.entries(state[k])) if (now - (v.last || v.first || v) > 3 * DAY) delete state[k][x];
-  for (const [x, v] of Object.entries(state.ideas)) if (now - v.first > 30 * DAY) delete state.ideas[x];
+  for (const [x, v] of Object.entries(state.ideas)) { if (now - v.first > 30 * DAY) delete state.ideas[x]; else { v.score ??= 7; v.src ??= 'older version'; } }
   state.feedback = state.feedback.slice(-200);
   const save = () => { fs.mkdirSync(new URL('./state/', import.meta.url), { recursive: true }); fs.writeFileSync(STATE_FILE, JSON.stringify(state)); };
 
@@ -451,8 +457,13 @@ async function main() {
   const [sol, rh, ely] = await Promise.all([chainTrending('solana'), chainTrending('robinhood'), chainTrending('elysium')]);
   const metas = [['SOL', sol], ['RH', rh], ['ELY', ely]].map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${Math.round(x.ch || 0)}%`).join(', ')}`).join('\n');
 
-  const picks = [];
-  for (let i = 0; i < fresh.length; i += 150) picks.push(...await aiFilter(fresh.slice(i, i + 150), metas, state));
+  const picks = []; const judgedOk = [];
+  for (let i = 0; i < fresh.length; i += 150) {
+    const chunk = fresh.slice(i, i + 150);
+    const r = await aiFilter(chunk, metas, state);
+    if (r === null) { console.error('AI failed for', chunk.length, 'items - will retry next run'); continue; }
+    picks.push(...r); judgedOk.push(...chunk);
+  }
 
   // 3. send new ideas
   let failed = false;
@@ -465,6 +476,7 @@ async function main() {
     const late = checks.map(c => c[1].late).filter(Boolean).sort((a, b) => b.mc - a.mc)[0];
     const firstSeen = Math.min(tr.first || now, p.cand.started || now);
     let badge = p.fresh === 'rising' ? '🚀 RISING' : p.fresh === 'peaking' ? '⏳ PEAKING' : '🐢 OLD';
+    if (badge.includes('RISING') && now - firstSeen > 12 * HOUR && (tr.srcs || []).length < 2) badge = '⏳ PEAKING';
     if (late) badge = '⚠️ LATE';
     const loud = p.score >= LOUD_SCORE && !late;
     const icon = late ? '⚠️' : loud ? '🚨' : p.score >= 8 ? '🔥' : '👀';
@@ -515,7 +527,7 @@ async function main() {
   }
   state.lastScorecard ||= now;
 
-  if (!failed) for (const c of fresh) state.judged[key(c.title)] = now;
+  if (!failed) for (const c of judgedOk) state.judged[key(c.title)] = now;
   save();
   if (failed) { console.error('Telegram failed - will retry next run'); process.exit(1); }
 }
