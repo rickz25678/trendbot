@@ -1,0 +1,28 @@
+name: trendbot
+on:
+  schedule:
+    - cron: '7 * * * *'   # every hour
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency: trendbot
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node bot.mjs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: save seen list
+        run: |
+          git config user.name trendbot
+          git config user.email trendbot@users.noreply.github.com
+          git add state
+          git diff --cached --quiet || (git commit -m "update seen list" && git push)
