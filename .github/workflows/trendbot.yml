@@ -1,7 +1,7 @@
 name: trendbot
 on:
   schedule:
-    - cron: '7 * * * *'   # every hour
+    - cron: '*/20 * * * *'   # every 20 minutes
   workflow_dispatch: {}
 permissions:
   contents: write
