@@ -28,7 +28,7 @@ jobs:
         timeout-minutes: 9
         env:
           LOOP_MS: '270000'   # keep checking every minute for ~4.5 min
-          TG_CHANNELS: ${{ vars.TG_CHANNELS || 'WatcherGuru' }}
+          TG_CHANNELS: ${{ vars.TG_CHANNELS || '' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

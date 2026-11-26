@@ -13,4 +13,4 @@ jobs:
           node-version: 22
       - run: node tools/check_sources.mjs
         env:
-          TG_CHANNELS: ${{ vars.TG_CHANNELS || 'WatcherGuru' }}
+          TG_CHANNELS: ${{ vars.TG_CHANNELS || '' }}
