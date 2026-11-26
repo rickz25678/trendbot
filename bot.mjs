@@ -219,16 +219,16 @@ async function launchpadFeed(slowDue) {
       const r = await fetch('https://four.meme/meme-api/v1/public/token/search', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA }, body: JSON.stringify({ type: 'NEW', listType: 'NOR', pageIndex: 1, pageSize: 50 }), signal: AbortSignal.timeout(20000) });
       const j = await r.json();
       for (const x of j?.data || []) out.push({ k: 'BNB:' + x.tokenAddress, name: x.name, symbol: x.shortName || x.symbol, pad: 'four.meme', chain: 'BNB', t: +x.createDate || Date.now() });
-    } catch (e) { console.error('four.meme', e.message); }
+    } catch (e) { if (!globalThis.fourWarned) { globalThis.fourWarned = 1; console.error('four.meme blocked here, using BNB new pools instead'); } }
     // Base: Clanker + Zora newest
-    const cl = await get('https://clanker.world/api/tokens?sort=desc&limit=50', true);
+    const cl = await get('https://clanker.world/api/tokens?sort=desc', true);
     for (const x of cl?.data || []) out.push({ k: 'BASE:' + x.contract_address, name: x.name, symbol: x.symbol, pad: 'Clanker', chain: 'BASE', t: Date.parse(x.created_at) || Date.now() });
     const zo = await get('https://api-sdk.zora.engineering/explore?listType=NEW&count=50', true);
     for (const e of zo?.exploreList?.edges || []) { const x = e.node || {}; if (x.address) out.push({ k: 'BASE:' + x.address, name: x.name, symbol: x.symbol, pad: 'Zora', chain: 'BASE', t: Date.parse(x.createdAt) || Date.now() }); }
     // Robinhood (Pons), Elysium (Montra), Hyperliquid: newest pools
-    for (const net of ['robinhood', 'elysium', 'hyperevm']) {
+    for (const net of ['robinhood', 'elysium', 'hyperevm', 'bsc']) {
       const j = await gecko(`networks/${GECKO[net]}/new_pools`);
-      for (const p of (j?.data || []).map(x => poolInfo(x, net))) out.push({ k: `${CHAINS[net]}:${p.token}`, name: p.name, symbol: p.name, pad: { robinhood: 'Robinhood', elysium: 'Elysium', hyperevm: 'Hyperliquid' }[net], chain: CHAINS[net], t: p.created || Date.now() });
+      for (const p of (j?.data || []).map(x => poolInfo(x, net))) out.push({ k: `${CHAINS[net]}:${p.token}`, name: p.name, symbol: p.name, pad: { robinhood: 'Robinhood', elysium: 'Elysium', hyperevm: 'Hyperliquid', bsc: 'BNB new pools' }[net], chain: CHAINS[net], t: p.created || Date.now() });
     }
   }
   return out.filter(x => x.name);
@@ -480,7 +480,11 @@ async function tg(method, body, isForm = false) {
   }
   return null;
 }
+// copy of every message sent (kept in state.sentLog) so the output can be audited later
+const SENT = [];
+const logSent = (text, extra = '') => SENT.push({ t: Date.now(), msg: String(text).replace(/<[^>]+>/g, '').slice(0, 900) + extra });
 async function sendText(text, { loud = false, markup } = {}) {
+  logSent(text);
   if (printMode()) { console.log('\n' + text.replace(/<[^>]+>/g, '') + '\n'); return true; }
   const parts = []; let cur = '';
   for (const block of text.split('\n\n')) { if ((cur + block).length > 3900) { parts.push(cur); cur = ''; } cur += block + '\n\n'; }
@@ -499,7 +503,7 @@ async function sendWithPhoto(caption, image, markup, loud) {
   if (image) {
     if (caption.length <= 1024) {
       const r = await tg('sendPhoto', { chat_id: CHAT(), photo: image, caption, parse_mode: 'HTML', reply_markup: markup, disable_notification: !loud });
-      if (r?.ok) return true;
+      if (r?.ok) { logSent(caption, ' [photo]'); return true; }
       if (r === null) return false;
     } else {
       const r = await tg('sendPhoto', { chat_id: CHAT(), photo: image, disable_notification: !loud });
@@ -899,6 +903,7 @@ Return JSON array: [{"i": index, "character": "short name", "why": "one line: wh
   state.lastScorecard ||= now;
 
   if (!failed) for (const c of judgedOk) state.judged[key(c.title)] = now;
+  state.sentLog = [...(state.sentLog || []), ...SENT.splice(0)].slice(-150);
   save();
   console.error(`tick ${n}: ${viral.length} items, ${fresh.length} new, ${newPicks.length} ideas${failed ? ', TELEGRAM FAILED' : ''}`);
   return !failed;
