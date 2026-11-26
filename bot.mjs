@@ -12,6 +12,7 @@
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 const STATE_FILE = new URL('./state/seen.json', import.meta.url);
 const LIB_FILE = new URL('./library.json', import.meta.url);
@@ -60,6 +61,7 @@ const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(
 const idOf = s => crypto.createHash('sha1').update(key(s)).digest('hex').slice(0, 10);
 const money = n => !n ? '?' : n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}K` : `$${Math.round(n)}`;
 const ago = ms => ms < HOUR ? `${Math.max(1, Math.round(ms / MIN))} min` : ms < DAY ? `${Math.round(ms / HOUR)}h` : `${Math.round(ms / DAY)}d`;
+const chg = x => x.created && Date.now() - x.created < 86400000 ? `🆕 ${ago(Date.now() - x.created)} old` : pct(x.ch24);
 const pct = n => n == null || isNaN(n) ? '?' : `${n >= 0 ? '+' : ''}${Math.round(n)}%`;
 const bingImg = u => u ? decode(u).replace(/^http:/, 'https:') + '&w=800' : '';
 const stripHtml = s => decode(String(s || '').replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '')).replace(/[ \t]+/g, ' ').trim();
@@ -68,7 +70,7 @@ const stripHtml = s => decode(String(s || '').replace(/<br\s*\/?>/g, '\n').repla
 async function xTrends(region, label) {
   const html = await get(`https://trends24.in/${region}/`);
   if (html) {
-    const firstCard = html.split('trend-card__list')[1] || html;
+    const firstCard = html.split(/<ol[^>]*trend-card__list/)[1] || html; // newest hour is the first list
     return [...firstCard.matchAll(/class=trend-link>([^<]+)/g)].slice(0, 30)
       .map((m, i) => ({ title: decode(m[1]), src: `X trending ${label}`, rank: i + 1 }));
   }
@@ -88,7 +90,7 @@ async function googleTrends(geo) {
 }
 const NEWS_QUERIES = ['viral animal', 'zoo baby animal', 'goes viral', 'viral meme', 'viral tiktok', 'viral video', 'game trailer leak', 'mascot viral', 'internet obsessed'];
 async function bingNews(q) {
-  const xml = await get(`https://www.bing.com/news/search?q=${encodeURIComponent(q)}&qft=interval%3d%227%22&format=rss`);
+  const xml = await get(`https://www.bing.com/news/search?q=${encodeURIComponent(q)}&qft=sortbydate%3d%221%22&format=rss`);
   return items(xml).slice(0, 10).map(it => ({
     title: tag(it, 'title'), detail: tag(it, 'description').slice(0, 200),
     link: tag(it, 'link'), image: bingImg(tag(it, 'News:Image')),
@@ -544,7 +546,7 @@ async function artTrends(state, now) {
     }
   }
   parts.push({ text: `Above are logos of the top trending meme coins right now. Full trending list:
-${coins.map(x => `$${x.name} (${x.chain}) ${money(x.mc)} ${pct(x.ch24)}`).join(', ')}
+${coins.map(x => `$${x.name} (${x.chain}) ${money(x.mc)} ${chg(x)}`).join(', ')}
 New coins taking off in the last 6h: ${movers.join('; ') || 'none'}
 Viral coin ideas found in the last 12h: ${ideas.join('; ') || 'none'}
 
@@ -617,7 +619,7 @@ async function tick(state, lib, n) {
         .filter(x => !NOT_MEME.test(x.name) && !seen.has(x.name.toUpperCase()) && seen.add(x.name.toUpperCase()))
         .slice(0, 6);
     }
-    state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${pct(x.ch24)}`).join(', ')}`).join('\n');
+    state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${chg(x)}`).join(', ')}`).join('\n');
   }
 
   // --- ideas ---
@@ -722,7 +724,7 @@ async function tick(state, lib, n) {
     const top = state.chainTop || {};
     const themes = await geminiJSON(`Trending meme coins right now per chain:\n${state.metas}\nIn max 3 short lines, what themes/metas are forming on each chain (e.g. "hippo coins", "slash tickers", "stock-paired memes")? Only say what is visible in the list. Return JSON: {"lines": ["..."]}`);
     let d = head('📈 CHAIN UPDATE', `${newInTop.length} new in the top lists`) +
-      Object.entries(top).map(([n, l]) => `<b>${CHAIN_NAME[n] || n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${pct(x.ch24)}`).join(', ') || 'no data')).join('\n');
+      Object.entries(top).map(([n, l]) => `<b>${CHAIN_NAME[n] || n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${chg(x)}`).join(', ') || 'no data')).join('\n');
     const lines = (Array.isArray(themes) ? themes : themes?.lines || []).map(l => typeof l === 'string' ? l : Object.values(l || {}).join(': ')).filter(l => l && l.trim());
     if (lines.length) d += `\n\n<b>🧭 Metas forming:</b>\n${lines.map(l => '• ' + esc(l)).join('\n')}`;
     if (!await sendText(d)) failed = true;
@@ -772,4 +774,6 @@ async function main() {
   if (!ok) { console.error('Telegram failed at least once - unsent items retry next run'); process.exit(1); }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+// sources are exported so tools/check_sources.mjs can test them; the bot only runs when started directly
+export { get, xTrends, googleTrends, bingNews, knowYourMeme, bluesky, wikipedia, tgChannel, chainTrending, cryptoRss, dexSearch, rugcheck, CHAINS, GECKO, TG_CHANNELS, NEWS_QUERIES };
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch(e => { console.error(e); process.exit(1); });
