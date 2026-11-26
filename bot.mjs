@@ -18,7 +18,14 @@ const LIB_FILE = new URL('./library.json', import.meta.url);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130 Safari/537.36';
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
-const CHAINS = { solana: 'SOL', robinhood: 'RH', elysium: 'ELY' };
+// DexScreener chain id -> short label, and the GeckoTerminal network id for the same chain
+const CHAINS = { solana: 'SOL', robinhood: 'RH', elysium: 'ELY', base: 'BASE', bsc: 'BNB', ethereum: 'ETH', hyperevm: 'HL' };
+const GECKO = { solana: 'solana', robinhood: 'robinhood', elysium: 'elysium', base: 'base', bsc: 'bsc', ethereum: 'eth', hyperevm: 'hyperevm' };
+const CHAIN_NAME = { SOL: 'Solana', RH: 'Robinhood', ELY: 'Elysium', BASE: 'Base', BNB: 'BNB', ETH: 'Ethereum', HL: 'Hyperliquid' };
+// minimum market cap / 1h volume for a "live mover" on each chain
+const MOVER_MIN = { solana: [50000, 30000], ethereum: [100000, 50000], base: [50000, 25000], bsc: [50000, 25000], hyperevm: [30000, 10000], robinhood: [20000, 10000], elysium: [20000, 10000] };
+// every message starts with a clear label so you know what it is at a glance
+const head = (label, sub = '') => `<b>${label}</b>${sub ? ' · ' + sub : ''}\n━━━━━━━━━━━━━━\n`;
 const MIN = 60000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const LOUD_SCORE = 9;
 const LOOP_MS = +(process.env.LOOP_MS || 270000); // how long one job keeps looping
@@ -156,7 +163,7 @@ function poolInfo(p, net) {
   };
 }
 async function chainTrending(net, duration = '24h') {
-  const j = await gecko(`networks/${net}/trending_pools?duration=${duration}`);
+  const j = await gecko(`networks/${GECKO[net]}/trending_pools?duration=${duration}`);
   return (j?.data || []).map(p => poolInfo(p, net));
 }
 const CRYPTO_FEEDS = ['https://decrypt.co/feed', 'https://cointelegraph.com/rss', 'https://www.coindesk.com/arc/outboundfeeds/rss', 'https://www.theblock.co/rss.xml'];
@@ -174,7 +181,7 @@ async function refreshLibrary(lib) {
   const have = new Set(lib.map(x => x.ticker.toUpperCase()));
   const cands = [];
   for (const net of Object.keys(CHAINS)) {
-    const j = await gecko(`networks/${net}/pools?sort=h24_volume_usd_desc&page=1`);
+    const j = await gecko(`networks/${GECKO[net]}/pools?sort=h24_volume_usd_desc&page=1`);
     for (const p of (j?.data || []).map(x => poolInfo(x, net))) if (p.mc >= 5e6 && !have.has(p.name.toUpperCase())) cands.push(p);
   }
   if (!cands.length) return 0;
@@ -233,7 +240,11 @@ function learningNotes(state) {
   return s;
 }
 
-const CHAIN_NOTES = `SOL = Solana/pump.fun: biggest crowd, fast news coins, rewards low-effort real photos and ultra-simple drawings.
+const CHAIN_NOTES = `BASE = Base: Coinbase crowd, Farcaster/Zora culture, blue-themed and onchain-culture memes (BRETT, TOSHI).
+BNB = BNB Chain/four.meme: Binance/CZ-related memes, Chinese-language memes, CZ's dog Broccoli style.
+ETH = Ethereum: older, bigger-money memes, high gas - only for strong ideas (PEPE, MOG, SPX).
+HL = Hyperliquid (HyperEVM): Hyperliquid community, Hypurr cat lore, trader culture.
+SOL = Solana/pump.fun: biggest crowd, fast news coins, rewards low-effort real photos and ultra-simple drawings.
 RH = Robinhood Chain/Pons: US retail crowd, Robinhood/stock/finance lore, stock-paired memes and cats did well; past its peak.
 ELY = Elysium/Montra: new Hyperliquid L2 (launched Nov 9 2026), early window, Hyperliquid lore (Hypurr cat, "Hype" prefix, slash-tickers) does well.`;
 
@@ -261,7 +272,7 @@ Return a JSON array (empty if nothing qualifies):
 {"i": index of the best source item, "topic": "short name", "tickers": ["BEST", "ALT1", "ALT2"] (3-8 letters, no $, the exact word people will search first),
  "score": 1-10, "why": "one plain line: what it is and why CT would meme it",
  "like": "TICKER of the closest past winner", "like_why": "short: how it is similar",
- "chain": "SOL|RH|ELY", "chain_why": "short reason",
+ "chain": "SOL|RH|ELY|BASE|BNB|ETH|HL", "chain_why": "short reason",
  "art": "one line simple art idea (one character on a plain background, style)",
  "fresh": "rising|peaking|old"}
 Only include score 6 or higher.
@@ -435,12 +446,12 @@ async function handleButtons(state) {
       state.feedback.push({ id, topic: idea.mover ? `new coin $${idea.topic} (${idea.why || ''})` : idea.topic, r: act, t: Date.now() });
       await sendText(act === 'up' ? `👍 Got it — more like <b>${esc(idea.topic)}</b>.` : `👎 Got it — fewer like <b>${esc(idea.topic)}</b>.`);
     } else if (act === 'art' && !idea.mover) {
-      await sendText(`🎨 Making art for <b>$${esc(idea.tickers[0])}</b> (${esc(idea.topic)})… about 30 seconds.`);
+      await sendText(head('🎨 MAKING ART') + `For <b>$${esc(idea.tickers[0])}</b> (${esc(idea.topic)})… about 30 seconds.`);
       const art = await makeArt(idea);
       if (!art) { await sendText(`Couldn't make art for ${esc(idea.topic)} this time — press 🎨 again to retry.`); continue; }
       const fd = new FormData();
       fd.append('chat_id', CHAT());
-      fd.append('caption', `$${idea.tickers[0]} — test art for ${idea.topic}. Press 🎨 again for another version.`);
+      fd.append('caption', `🎨 TEST ART\n━━━━━━━━━━━━━━\n$${idea.tickers[0]} — ${idea.topic}. Press 🎨 again for another version.`);
       fd.append('reply_markup', JSON.stringify(ideaButtons(id)));
       fd.append('photo', new Blob([art.buf], { type: art.mime }), 'art.png');
       await tg('sendPhoto', fd, true);
@@ -462,11 +473,13 @@ async function raceWatch(state, now) {
     for (const p of coins) {
       const mc = p.marketCap || p.fdv || 0;
       if (!p.pairCreatedAt || p.pairCreatedAt < idea.first - 10 * MIN) continue;
+      // ignore dead junk tokens (no liquidity, no volume) - they can still count later if they come alive
+      if ((p.liquidity?.usd || 0) < 2000 && (p.volume?.h24 || 0) < 2000) continue;
       if (mc > (idea.bestMc || 0)) { idea.bestMc = mc; idea.bestUrl = p.url; idea.bestChain = CHAINS[p.chainId]; }
       if (idea.seenPairs.includes(p.baseToken.address)) continue;
       idea.seenPairs.push(p.baseToken.address);
       idea.coins = (idea.coins || 0) + 1;
-      if (age < 2 * DAY && idea.raceAlerts < 3) { idea.raceAlerts++; alerts.push(`🚨 <b>RACE: someone launched $${esc(p.baseToken.symbol)} for your idea "${esc(idea.topic)}"</b>\n${coinLine(p)}`); }
+      if (age < 2 * DAY && idea.raceAlerts < 3) { idea.raceAlerts++; alerts.push(head('🚨 RACE ALERT', CHAIN_NAME[CHAINS[p.chainId]]) + `Someone launched <b>$${esc(p.baseToken.symbol)}</b> for your idea "<b>${esc(idea.topic)}</b>"\n${coinLine(p)}`); }
     }
   }
   return alerts;
@@ -483,8 +496,7 @@ async function weeklyScorecard(state, now) {
   for (const i of week) { const b = i.score >= 9 ? '9-10' : i.score >= 8 ? '8' : i.score >= 7 ? '7' : '6'; const s = (byScore[b] ||= { n: 0, big: 0 }); s.n++; if (i.bestMc >= 250000) s.big++; }
   const top = week.filter(i => i.bestMc).sort((a, b) => b.bestMc - a.bestMc).slice(0, 5);
   const fb = state.feedback.filter(f => now - f.t < 7 * DAY);
-  return `<b>📊 Weekly scorecard</b>
-Ideas sent: ${week.length} · got a coin made: ${withCoin.length} · coin passed $250K: ${big.length} · passed $1M: ${huge.length}
+  return `${head('📊 WEEKLY SCORECARD')}Ideas sent: ${week.length} · got a coin made: ${withCoin.length} · coin passed $250K: ${big.length} · passed $1M: ${huge.length}
 👍 ${fb.filter(f => f.r === 'up').length} · 👎 ${fb.filter(f => f.r === 'dn').length}
 
 <b>By source</b> (ideas / got coin / $250K+)
@@ -495,6 +507,57 @@ ${Object.entries(byScore).map(([s, v]) => `${s}/10: ${v.n} / ${v.big}`).join('\n
 
 <b>Best coins made from your ideas</b>
 ${top.map(i => `• ${esc(i.topic)}: ${money(i.bestMc)} on ${i.bestChain} · <a href="${esc(i.bestUrl)}">chart</a>`).join('\n') || 'none yet'}`;
+}
+
+// ---------- 🎨 what characters and art styles are trending ----------
+async function artTrends(state, now) {
+  const coins = Object.entries(state.chainTop || {}).flatMap(([c, l]) => l.map(x => ({ ...x, chain: c })));
+  const movers = Object.values(state.ideas).filter(i => i.mover && now - i.first < 6 * HOUR).map(i => `$${i.topic}: ${i.why}`);
+  const ideas = Object.values(state.ideas).filter(i => !i.mover && now - i.first < 12 * HOUR).map(i => i.topic);
+  if (!coins.length) return null;
+  // coin logos so the AI can actually SEE the art styles
+  const parts = [];
+  const byNet = {};
+  for (const x of coins) if (x.token) (byNet[x.net] ||= []).push(x);
+  let n = 0;
+  for (const [net, list] of Object.entries(byNet)) {
+    const j = await get(`https://api.dexscreener.com/tokens/v1/${net}/${list.slice(0, 6).map(x => x.token).join(',')}`, true);
+    const seen = new Set();
+    for (const p of Array.isArray(j) ? j : []) {
+      const img = p.info?.imageUrl; const a = p.baseToken?.address;
+      if (!img || seen.has(a) || n >= 16) continue; seen.add(a);
+      try {
+        const r = await fetch(img, { signal: AbortSignal.timeout(15000) });
+        const type = (r.headers.get('content-type') || '').split(';')[0];
+        if (!r.ok || !type.startsWith('image/')) continue;
+        parts.push({ text: `Logo of $${p.baseToken.symbol} (${CHAINS[net]}):` }, { inline_data: { mime_type: type, data: Buffer.from(await r.arrayBuffer()).toString('base64') } });
+        n++;
+      } catch { /* skip */ }
+    }
+  }
+  parts.push({ text: `Above are logos of the top trending meme coins right now. Full trending list:
+${coins.map(x => `$${x.name} (${x.chain}) ${money(x.mc)} ${pct(x.ch24)}`).join(', ')}
+New coins taking off in the last 6h: ${movers.join('; ') || 'none'}
+Viral coin ideas found in the last 12h: ${ideas.join('; ') || 'none'}
+
+For a meme coin creator, say what is TRENDING right now:
+1. characters/subjects (e.g. hippos, raccoons, Pepe variants, cats in hoods, real people) - only ones that appear 2+ times or are clearly hot
+2. art styles you can SEE in the logos (e.g. real animal photo, MS-Paint drawing, 3D render, anime, pixel art, cartoon with thick outline, AI-cinematic)
+3. one short tip: what to make next.
+Return JSON: {"characters": [{"name": "...", "examples": ["TICKER", ...], "note": "short"}], "art": [{"style": "...", "examples": ["TICKER"], "note": "short"}], "tip": "..."}` });
+  const out = await gemini(parts, MODEL, { generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } });
+  if (!out) return null;
+  let j; try { j = JSON.parse(out.map(p => p.text || '').join('')); } catch { return null; }
+  const chars = j.characters || [], art = j.art || [];
+  if (!chars.length && !art.length) return null;
+  const sig = [...chars.map(c => key(c.name)), '|', ...art.map(a => key(a.style))].join(',');
+  if (sig === state.lastArt) return null; // nothing changed since last report
+  const msg = new String(head('🎨 TRENDING CHARACTERS & ART') +
+    `<b>Characters:</b>\n${chars.map(c => `• <b>${esc(c.name)}</b> — ${(c.examples || []).map(t => '$' + esc(t)).join(' ')}${c.note ? ' · ' + esc(c.note) : ''}`).join('\n') || '• nothing clear'}\n\n` +
+    `<b>Art styles:</b>\n${art.map(a => `• <b>${esc(a.style)}</b> — ${(a.examples || []).map(t => '$' + esc(t)).join(' ')}${a.note ? ' · ' + esc(a.note) : ''}`).join('\n') || '• nothing clear'}` +
+    (j.tip ? `\n\n💡 <b>Make next:</b> ${esc(j.tip)}` : ''));
+  msg.sig = sig;
+  return msg;
 }
 
 // ---------- one check ----------
@@ -519,6 +582,7 @@ async function tick(state, lib, n) {
     Promise.all(TG_CHANNELS.map(c => tgChannel(c, state))),
   ]);
   const tgPosts = tgLists.flat();
+  console.error('sources:', ['X', 'GoogleUS', 'GoogleGB', 'KYM', 'Bluesky', 'News', 'Wiki'].map((s, i) => `${s}=${viralLists[i].length}`).join(' '), `TG=${tgPosts.length}`);
   const viral = [...viralLists.flat(), ...tgPosts].filter(c => c.title);
 
   for (const c of viral) {
@@ -537,8 +601,8 @@ async function tick(state, lib, n) {
 
   // chain context (every 10 min)
   if (due('chains', 10 * MIN) || !state.metas) {
-    const [sol, rh, ely] = [await chainTrending('solana'), await chainTrending('robinhood'), await chainTrending('elysium')];
-    state.chainTop = { SOL: sol.slice(0, 6), RH: rh.slice(0, 6), ELY: ely.slice(0, 6) };
+    state.chainTop = {};
+    for (const net of Object.keys(CHAINS)) state.chainTop[CHAINS[net]] = (await chainTrending(net)).slice(0, 6);
     state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${pct(x.ch24)}`).join(', ')}`).join('\n');
   }
 
@@ -566,7 +630,8 @@ async function tick(state, lib, n) {
     const loud = p.score >= LOUD_SCORE && !recentBig;
     const icon = recentBig ? '⚠️' : loud ? '🚨' : p.score >= 8 ? '🔥' : '👀';
     const src = p.cand.link ? `<a href="${esc(p.cand.link)}">${esc(p.cand.src)}</a>` : esc(p.cand.src);
-    let cap = `${icon} <b>${p.score}/10 ${esc(p.topic)}</b>  ${badge}\n${esc(p.why)}\n🧬 Like <b>$${esc(p.like)}</b> — ${esc(p.like_why)}\n\n`;
+    let cap = head('💡 COIN IDEA', `${icon} ${p.score}/10 · ${badge}`) +
+      `<b>${esc(p.topic)}</b>\n${esc(p.why)}\n🧬 Like <b>$${esc(p.like)}</b> — ${esc(p.like_why)}\n\n`;
     if (coins.length) cap += `<b>Live coins already out:</b>\n${coins.slice(0, 3).map(coinLine).join('\n')}\n`;
     else cap += `<b>No live coin yet — you could be first.</b>\n`;
     if (open.length) cap += `<b>Open tickers:</b> ${open.map(o => `$${esc(o.t)} (${o.chains.join(' ')})`).join(' · ')}\n`;
@@ -584,7 +649,7 @@ async function tick(state, lib, n) {
     const words = [key(idea.topic), ...idea.tickers.map(key)].filter(w => w.length >= 4);
     const srcs = new Set(Object.entries(state.trends).filter(([k, t]) => t.last === now && words.some(w => k.includes(w))).flatMap(([, t]) => t.srcs));
     if (srcs.size >= Math.max(3, (idea.srcs || 1) + 2)) {
-      if (await sendText(`📣 <b>STILL SPREADING: ${esc(idea.topic)}</b>\nNow in ${srcs.size} places: ${esc([...srcs].join(', '))}\nTickers: ${idea.tickers.map(t => '$' + esc(t)).join(' ')}`, { loud: true })) idea.rerun = true;
+      if (await sendText(head('📣 TREND SPREADING') + `<b>${esc(idea.topic)}</b>\nNow in ${srcs.size} places: ${esc([...srcs].join(', '))}\nTickers: ${idea.tickers.map(t => '$' + esc(t)).join(' ')}`, { loud: true })) idea.rerun = true;
     }
   }
 
@@ -595,7 +660,7 @@ async function tick(state, lib, n) {
     const kept = await newsFilter(newsNew, lib);
     if (kept !== null) {
       for (const n of kept) {
-        const msg = `📰 <b>${esc(n.title)}</b>\n<i>${esc(n.why)}</i>\n<a href="${esc(n.link)}">${esc(n.src)}</a>${n.started ? ` · ${ago(now - n.started)} ago` : ''}`;
+        const msg = head('📰 NEWS', n.urgent ? '⚡ important' : '') + `<b>${esc(n.title)}</b>\n<i>Why it matters: ${esc(n.why)}</i>\n<a href="${esc(n.link)}">${esc(n.src)}</a>${n.started ? ` · ${ago(now - n.started)} ago` : ''}`;
         if (!await sendText(msg, { loud: n.urgent })) { failed = true; break; }
         state.news[key(n.title)] = now;
       }
@@ -609,7 +674,7 @@ async function tick(state, lib, n) {
     for (const net of Object.keys(CHAINS)) {
       for (const p of await chainTrending(net, '5m')) {
         const age = now - p.created;
-        const minMc = net === 'solana' ? 50000 : 20000, minVol = net === 'solana' ? 30000 : 10000;
+        const [minMc, minVol] = MOVER_MIN[net];
         if (age > 12 * HOUR || p.mc < minMc || p.mc > 20e6 || p.vol1h < minVol || p.liq < 5000 || p.buys1h <= p.sells1h) continue;
         if (state.movers[p.token]) continue;
         cand.push(p);
@@ -621,7 +686,8 @@ async function tick(state, lib, n) {
       for (const m of kept) {
         const id = idOf('mover ' + m.token);
         const safety = m.net === 'solana' ? await rugcheck(m.token) : '';
-        const msg = `🔴 <b>LIVE MOVER: $${esc(m.name)}</b> on ${m.chain} · ${ago(now - m.created)} old · ${m.score}/10\n${esc(m.meme)}\n🧬 Like <b>$${esc(m.like)}</b>\n` +
+        const msg = head('🪙 LIVE COIN MOVING', `${CHAIN_NAME[m.chain]} · ${m.score}/10`) +
+          `<b>$${esc(m.name)}</b> · ${ago(now - m.created)} old\n${esc(m.meme)}\n🧬 Like <b>$${esc(m.like)}</b>\n` +
           `mc ${money(m.mc)} · liq ${money(m.liq)} · 1h vol ${money(m.vol1h)} · 1h ${pct(m.ch1h)}\n1h: ${m.buys1h} buys / ${m.sells1h} sells\n` +
           (safety ? safety + '\n' : '') + `<a href="${m.link}">chart</a> · <code>${esc(m.token)}</code>`;
         state.ideas[id] = { first: now, topic: m.name, tickers: [m.name], why: m.meme, mover: true, score: m.score, src: 'Live mover' };
@@ -641,10 +707,16 @@ async function tick(state, lib, n) {
     state.due.digest = now; state.lastTop = topNames;
     const top = state.chainTop || {};
     const themes = await geminiJSON(`Trending meme coins right now per chain:\n${state.metas}\nIn max 3 short lines, what themes/metas are forming on each chain (e.g. "hippo coins", "slash tickers", "stock-paired memes")? Only say what is visible in the list. Return JSON: {"lines": ["..."]}`);
-    let d = `<b>📈 Chains — ${new Date(now).toISOString().slice(11, 16)} UTC</b>\n` +
-      [['Solana', top.SOL], ['Robinhood', top.RH], ['Elysium', top.ELY]].map(([n, l]) => `<b>${n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${pct(x.ch24)}`).join(', ') || 'no data')).join('\n');
+    let d = head('📈 CHAIN UPDATE', `${newInTop.length} new in the top lists`) +
+      Object.entries(top).map(([n, l]) => `<b>${CHAIN_NAME[n] || n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${pct(x.ch24)}`).join(', ') || 'no data')).join('\n');
     if (themes?.lines?.length) d += `\n\n<b>🧭 Metas forming:</b>\n${themes.lines.map(l => '• ' + esc(l)).join('\n')}`;
     if (!await sendText(d)) failed = true;
+  }
+
+  // --- 🎨 trending characters & art styles (every 2h, only if something changed) ---
+  if (!failed && due('art', 2 * HOUR)) {
+    const rep = await artTrends(state, now);
+    if (rep) { if (await sendText(rep)) state.lastArt = rep.sig; else failed = true; }
   }
 
   // --- weekly: scorecard + library refresh ---
