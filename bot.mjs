@@ -1,27 +1,33 @@
 // Coin Trend Radar
-// Every run (every ~5 min on GitHub Actions):
-//  1. handles Telegram button presses (🎨 make art, 👍, 👎)
-//  2. scans viral sources outside crypto, Gemini keeps only coin-worthy characters/animals/objects
-//  3. sends each new idea with a picture, 3 tickers checked on Solana / Robinhood Chain / Elysium,
-//     best chain, art idea, freshness, LATE warning. 9-10/10 = loud, others silent.
-//  4. race watch: alerts when someone launches a coin for an idea you were sent
-//  5. hourly chain digest, weekly scorecard; past hits + your ratings are fed back to the AI.
+// One GitHub Actions job loops for ~4.5 minutes, checking every ~60 seconds; each job starts the next one.
+// Every loop:
+//  - handles Telegram buttons (🎨 make art, 👍, 👎)
+//  - reads viral sources outside crypto + public Telegram channels
+//  - Gemini compares every trend to a library of past winning meme coins and keeps only ones that match a winner pattern
+//  - sends ideas with picture, closest past winner, REAL existing coins (mc, liq, volume, age, buys/sells, CA) or OPEN tickers
+//  - 🔴 live movers: new coins on Solana / Robinhood Chain / Elysium that are taking off, with safety check
+//  - 📰 crypto news that matters for meme coin launchers, as it comes out
+//  - race watch, hourly chain/meta digest, weekly scorecard + weekly library refresh
 // No npm packages (Node 20+).
-// Env: GEMINI_API_KEY (needed), TELEGRAM_TOKEN + TELEGRAM_CHAT_ID (optional: prints instead),
-// YOUTUBE_API_KEY / REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET (optional).
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 
 const STATE_FILE = new URL('./state/seen.json', import.meta.url);
+const LIB_FILE = new URL('./library.json', import.meta.url);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130 Safari/537.36';
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
 const CHAINS = { solana: 'SOL', robinhood: 'RH', elysium: 'ELY' };
 const MIN = 60000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const LOUD_SCORE = 9;
+const LOOP_MS = +(process.env.LOOP_MS || 270000); // how long one job keeps looping
+const TICK_MS = 60000;                              // one check per minute
+// public Telegram channels to copy (read via t.me/s/<name>)
+const TG_CHANNELS = (process.env.TG_CHANNELS || 'WatcherGuru').split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const FORCE = process.argv.includes('--force');
+const ONCE = process.argv.includes('--once') || FORCE;
 
 // ---------- helpers ----------
 async function get(url, asJson = false, headers = {}) {
@@ -37,7 +43,7 @@ async function get(url, asJson = false, headers = {}) {
 const decode = s => (s || '')
   .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
   .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&apos;|&#39;|&#x27;/g, "'").trim();
+  .replace(/&quot;/g, '"').replace(/&apos;|&#39;|&#x27;/g, "'").replace(/&nbsp;/g, ' ').trim();
 const tag = (xml, t) => { const m = xml.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`)); return m ? decode(m[1]) : ''; };
 const items = xml => (xml || '').split(/<item[\s>]/).slice(1);
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -45,13 +51,15 @@ const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(
 const idOf = s => crypto.createHash('sha1').update(key(s)).digest('hex').slice(0, 10);
 const money = n => !n ? '?' : n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}K` : `$${Math.round(n)}`;
 const ago = ms => ms < HOUR ? `${Math.max(1, Math.round(ms / MIN))} min` : ms < DAY ? `${Math.round(ms / HOUR)}h` : `${Math.round(ms / DAY)}d`;
+const pct = n => n == null || isNaN(n) ? '?' : `${n >= 0 ? '+' : ''}${Math.round(n)}%`;
 const bingImg = u => u ? decode(u).replace(/^http:/, 'https:') + '&w=800' : '';
+const stripHtml = s => decode(String(s || '').replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '')).replace(/[ \t]+/g, ' ').trim();
 
 // ---------- viral sources (outside crypto) ----------
 async function xTrends(region, label) {
   const html = await get(`https://trends24.in/${region}/`);
   if (html) {
-    const firstCard = html.split('trend-card__list')[1] || html; // latest hour only
+    const firstCard = html.split('trend-card__list')[1] || html;
     return [...firstCard.matchAll(/class=trend-link>([^<]+)/g)].slice(0, 30)
       .map((m, i) => ({ title: decode(m[1]), src: `X trending ${label}`, rank: i + 1 }));
   }
@@ -78,20 +86,12 @@ async function bingNews(q) {
     started: Date.parse(tag(it, 'pubDate')) || 0, src: 'News',
   }));
 }
-async function rotatingNews(now) {
-  // 3 of the 9 searches per run, so all are covered every 3 runs (~15 min) without getting rate-limited
-  const slot = Math.floor(now / (5 * MIN)) % 3;
-  const qs = FORCE ? NEWS_QUERIES : NEWS_QUERIES.filter((_, i) => i % 3 === slot);
-  const out = [];
-  for (const q of qs) { out.push(...await bingNews(q)); await sleep(700); }
-  return out.filter(n => !n.started || now - n.started < 2 * DAY);
-}
 async function knowYourMeme() {
   const xml = await get('https://knowyourmeme.com/newsfeed.rss');
   return items(xml).slice(0, 15).map(it => {
     const desc = tag(it, 'description');
     const img = (desc.match(/<img[^>]+src="([^"]+)"/) || [])[1];
-    return { title: tag(it, 'title'), detail: decode(desc.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').slice(0, 250), link: tag(it, 'link'), image: img || '', started: Date.parse(tag(it, 'pubDate')) || 0, src: 'Know Your Meme' };
+    return { title: tag(it, 'title'), detail: stripHtml(desc).slice(0, 250), link: tag(it, 'link'), image: img || '', started: Date.parse(tag(it, 'pubDate')) || 0, src: 'Know Your Meme' };
   });
 }
 async function bluesky() {
@@ -106,57 +106,91 @@ async function wikipedia() {
   return arts.filter(a => !/^(Main_Page|Special:|Wikipedia:|Portal:|File:|Deaths_in)/.test(a.article)).slice(0, 25)
     .map(a => ({ title: a.article.replace(/_/g, ' '), detail: `${a.views.toLocaleString()} Wikipedia views yesterday`, src: 'Wikipedia' }));
 }
-async function youtube() {
-  const k = process.env.YOUTUBE_API_KEY; if (!k) return [];
+// public Telegram channel -> new posts since last time
+async function tgChannel(name, state) {
+  const html = await get(`https://t.me/s/${name}`);
+  if (!html) return [];
+  const last = state.tgSeen[name] || 0;
   const out = [];
-  for (const region of ['US', 'GB']) {
-    const j = await get(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&maxResults=25&regionCode=${region}&key=${k}`, true);
-    for (const v of j?.items || []) out.push({
-      title: v.snippet.title, detail: `${(+v.statistics.viewCount).toLocaleString()} views, channel ${v.snippet.channelTitle}`,
-      link: `https://youtu.be/${v.id}`, image: v.snippet.thumbnails?.high?.url || '', started: Date.parse(v.snippet.publishedAt) || 0, src: `YouTube trending ${region}`,
-    });
+  for (const block of html.split('tgme_widget_message_wrap').slice(1)) {
+    const post = +(block.match(/data-post="[^"\/]+\/(\d+)"/) || [])[1];
+    if (!post || post <= last) continue;
+    const text = stripHtml((block.match(/tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>/) || [])[1]);
+    if (!text) continue;
+    const img = (block.match(/tgme_widget_message_photo_wrap[^>]*background-image:url\('([^']+)'\)/) || [])[1];
+    const when = Date.parse((block.match(/datetime="([^"]+)"/) || [])[1]) || 0;
+    out.push({ post, title: text.split('\n')[0].slice(0, 200), detail: text.slice(0, 400), link: `https://t.me/${name}/${post}`, image: img || '', started: when, src: `TG @${name}` });
   }
-  return out;
-}
-const SUBREDDITS = ['aww', 'AnimalsBeingDerps', 'Damnthatsinteresting', 'memes', 'OutOfTheLoop', 'GamingLeaksAndRumours', 'nextfuckinglevel', 'interestingasfuck', 'BrandNewSentence'];
-async function reddit() {
-  const { REDDIT_CLIENT_ID: id, REDDIT_CLIENT_SECRET: sec } = process.env; if (!id || !sec) return [];
-  try {
-    const t = await fetch('https://www.reddit.com/api/v1/access_token', {
-      method: 'POST', body: 'grant_type=client_credentials',
-      headers: { Authorization: 'Basic ' + Buffer.from(`${id}:${sec}`).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'coin-trend-radar/1.0' },
-    }).then(r => r.json());
-    const out = [];
-    for (const sub of SUBREDDITS) {
-      const j = await get(`https://oauth.reddit.com/r/${sub}/rising?limit=8`, true, { Authorization: `Bearer ${t.access_token}`, 'User-Agent': 'coin-trend-radar/1.0' });
-      for (const c of j?.data?.children || []) {
-        const p = c.data; if (p.over_18) continue;
-        const img = p.preview?.images?.[0]?.source?.url;
-        out.push({ title: p.title, detail: `r/${sub}, ${p.ups} upvotes`, link: `https://reddit.com${p.permalink}`, image: img ? decode(img) : '', started: p.created_utc * 1000, src: `Reddit r/${sub}` });
-      }
-    }
-    return out;
-  } catch (e) { console.error('reddit', e.message); return []; }
+  if (out.length) state.tgSeen[name] = Math.max(last, ...out.map(o => o.post));
+  // first time we see a channel: only keep the last 3 posts, not its whole history
+  return last ? out : out.slice(-3);
 }
 
 // ---------- crypto sources ----------
-async function chainTrending(net) {
-  const j = await get(`https://api.geckoterminal.com/api/v2/networks/${net}/trending_pools`, true);
-  return (j?.data || []).slice(0, 6).map(p => {
-    const a = p.attributes;
-    return { name: a.name.split(' / ')[0], mc: +(a.market_cap_usd || a.fdv_usd), ch: +a.price_change_percentage?.h24, link: `https://www.geckoterminal.com/${net}/pools/${a.address}` };
-  });
+let lastGecko = 0;
+async function gecko(path) { // GeckoTerminal free API allows ~30 calls/min
+  const wait = 2200 - (Date.now() - lastGecko); if (wait > 0) await sleep(wait);
+  for (let a = 0; a < 3; a++) {
+    lastGecko = Date.now();
+    try {
+      const r = await fetch(`https://api.geckoterminal.com/api/v2/${path}`, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+      if (r.ok) return await r.json();
+      console.error('gecko', r.status, path);
+      if (r.status !== 429) return null;
+    } catch (e) { console.error('gecko', e.message); }
+    await sleep(15000 * (a + 1));
+  }
+  return null;
 }
-const CRYPTO_FEEDS = ['https://decrypt.co/feed', 'https://cointelegraph.com/rss', 'https://www.coindesk.com/arc/outboundfeeds/rss'];
-const CRYPTO_WORDS = /meme|memecoin|pump\.?fun|solana|robinhood chain|hyperliquid|elysium|montra|launchpad|dogecoin|pepe|bonk|new chain|mainnet/i;
-async function cryptoNews() {
+function poolInfo(p, net) {
+  const a = p.attributes;
+  return {
+    net, chain: CHAINS[net], name: a.name.split(' / ')[0], address: a.address,
+    token: (p.relationships?.base_token?.data?.id || '').replace(/^[^_]+_/, ''),
+    mc: +(a.market_cap_usd || a.fdv_usd) || 0, liq: +a.reserve_in_usd || 0,
+    vol1h: +a.volume_usd?.h1 || 0, vol24: +a.volume_usd?.h24 || 0,
+    ch1h: +a.price_change_percentage?.h1, ch24: +a.price_change_percentage?.h24,
+    buys1h: a.transactions?.h1?.buys || 0, sells1h: a.transactions?.h1?.sells || 0,
+    created: Date.parse(a.pool_created_at) || 0,
+    link: `https://dexscreener.com/${net}/${a.address}`,
+  };
+}
+async function chainTrending(net, duration = '24h') {
+  const j = await gecko(`networks/${net}/trending_pools?duration=${duration}`);
+  return (j?.data || []).map(p => poolInfo(p, net));
+}
+const CRYPTO_FEEDS = ['https://decrypt.co/feed', 'https://cointelegraph.com/rss', 'https://www.coindesk.com/arc/outboundfeeds/rss', 'https://www.theblock.co/rss.xml'];
+async function cryptoRss() {
   return (await Promise.all(CRYPTO_FEEDS.map(u => get(u)))).flatMap(items)
-    .map(it => ({ title: tag(it, 'title'), link: tag(it, 'link') }))
-    .filter(n => CRYPTO_WORDS.test(n.title));
+    .map(it => ({ title: tag(it, 'title'), link: tag(it, 'link'), started: Date.parse(tag(it, 'pubDate')) || 0, src: 'Crypto news' }));
 }
-async function geckoTrending() {
-  const j = await get('https://api.coingecko.com/api/v3/search/trending', true);
-  return (j?.coins || []).slice(0, 7).map(c => `${c.item.name} ($${c.item.symbol})`);
+
+// ---------- winners library ----------
+const loadLibrary = () => { try { return JSON.parse(fs.readFileSync(LIB_FILE, 'utf8')); } catch { return []; } };
+const libraryText = lib => lib.sort((a, b) => (b.peak || 0) - (a.peak || 0))
+  .map(x => `${x.ticker} (${x.chain}${x.peak ? ', peak ' + money(x.peak) : ''}): ${x.type} — ${x.story}`).join('\n');
+
+async function refreshLibrary(lib) {
+  const have = new Set(lib.map(x => x.ticker.toUpperCase()));
+  const cands = [];
+  for (const net of Object.keys(CHAINS)) {
+    const j = await gecko(`networks/${net}/pools?sort=h24_volume_usd_desc&page=1`);
+    for (const p of (j?.data || []).map(x => poolInfo(x, net))) if (p.mc >= 5e6 && !have.has(p.name.toUpperCase())) cands.push(p);
+  }
+  if (!cands.length) return 0;
+  const list = cands.slice(0, 40).map((c, i) => `${i}. ${c.name} on ${c.chain}, market cap ${money(c.mc)}, 24h volume ${money(c.vol24)}`).join('\n');
+  const res = await geminiJSON(`These are the biggest coins by volume on Solana, Robinhood Chain and Elysium right now. Keep ONLY real MEME coins (not stablecoins, L1/L2 tokens, DeFi, wrapped assets, launchpad or exchange tokens).
+For each meme coin, write what the meme is and where its story came from (if you are not sure, say "unclear origin").
+Return JSON array: [{"i": index, "type": "short meme category e.g. viral zoo animal / internet relic face / chain lore cat", "story": "one line origin"}]
+${list}`);
+  let added = 0;
+  for (const r of Array.isArray(res) ? res : []) {
+    const c = cands[r.i]; if (!c || have.has(c.name.toUpperCase())) continue;
+    lib.push({ ticker: c.name, chain: c.chain, peak: c.mc, type: String(r.type).slice(0, 80), story: String(r.story).slice(0, 170), src: 'auto', added: new Date().toISOString().slice(0, 10) });
+    have.add(c.name.toUpperCase()); added++;
+  }
+  if (added) fs.writeFileSync(LIB_FILE, JSON.stringify(lib, null, 1));
+  return added;
 }
 
 // ---------- Gemini ----------
@@ -184,42 +218,49 @@ async function geminiJSON(prompt) {
 }
 
 function learningNotes(state) {
-  const ideas = Object.values(state.ideas);
-  const hits = ideas.filter(i => i.bestMc >= 250000).sort((a, b) => b.bestMc - a.bestMc).slice(0, 10)
-    .map(i => `${i.topic} (a coin hit ${money(i.bestMc)})`);
+  const ideas = Object.values(state.ideas).filter(i => !i.mover);
+  const hits = ideas.filter(i => i.bestMc >= 250000).sort((a, b) => b.bestMc - a.bestMc).slice(0, 10).map(i => `${i.topic} (a coin hit ${money(i.bestMc)})`);
   const flops = ideas.filter(i => i.coins > 0 && (i.bestMc || 0) < 50000 && Date.now() - i.first > DAY).slice(-10).map(i => i.topic);
-  const liked = state.feedback.filter(f => f.r === 'up').slice(-15).map(f => f.topic);
-  const disliked = state.feedback.filter(f => f.r === 'dn').slice(-15).map(f => f.topic);
+  const ignored = ideas.filter(i => !i.coins && Date.now() - i.first > 2 * DAY).slice(-15).map(i => i.topic);
+  const liked = state.feedback.filter(f => f.r === 'up').slice(-20).map(f => f.topic);
+  const disliked = state.feedback.filter(f => f.r === 'dn').slice(-20).map(f => f.topic);
   let s = '';
-  if (liked.length) s += `\nThe user LIKED these past ideas (find more like them): ${liked.join('; ')}`;
+  if (liked.length) s += `\nThe user LIKED these (find more like them): ${liked.join('; ')}`;
   if (disliked.length) s += `\nThe user DISLIKED these (avoid ideas like them): ${disliked.join('; ')}`;
-  if (hits.length) s += `\nPast ideas where a real coin later ran (good signal): ${hits.join('; ')}`;
-  if (flops.length) s += `\nPast ideas where coins were made but went nowhere: ${flops.join('; ')}`;
+  if (hits.length) s += `\nPast ideas where crypto traders really made a coin that ran (strong signal): ${hits.join('; ')}`;
+  if (flops.length) s += `\nPast ideas that got coins but went nowhere: ${flops.join('; ')}`;
+  if (ignored.length) s += `\nPast ideas crypto ignored completely (nobody made a coin - avoid this kind): ${ignored.join('; ')}`;
   return s;
 }
 
-async function aiFilter(cands, metas, state) {
-  if (!cands.length) return [];
-  const recent = Object.values(state.ideas).filter(i => Date.now() - i.first < 3 * DAY).map(i => i.topic);
-  const list = cands.map((c, i) => `${i}. [${c.src}] ${c.title}${c.detail ? ' — ' + c.detail : ''}`).join('\n');
-  const prompt = `You pick viral trends that could become a successful MEME COIN. Now: ${new Date().toUTCString()}.
+const CHAIN_NOTES = `SOL = Solana/pump.fun: biggest crowd, fast news coins, rewards low-effort real photos and ultra-simple drawings.
+RH = Robinhood Chain/Pons: US retail crowd, Robinhood/stock/finance lore, stock-paired memes and cats did well; past its peak.
+ELY = Elysium/Montra: new Hyperliquid L2 (launched Nov 9 2026), early window, Hyperliquid lore (Hypurr cat, "Hype" prefix, slash-tickers) does well.`;
 
-WHAT WINS (2025-2026 research): a CHARACTER, ANIMAL or OBJECT that normal people OUTSIDE crypto know or are suddenly talking about; recognisable at thumbnail size; easy to draw simply; funny/cute/absurd/ironic; riding a FRESH attention wave (viral zoo animal like Moo Deng or Fiona the hippo; an item shown in a GTA 6 trailer; a White House penguin post; an internet-relic face like Troll face; a self-aware joke like USELESS). The exact word people will search is the best ticker. Being FIRST matters more than art.
-WHAT LOSES: sports results/players, elections and politicians as plain news, deaths/tragedies/disasters/crime, holidays, stock/finance news, celebrities with no meme angle, generic dog/cat with no hook, things already old. Never pick tragedies, real private people or children.
+async function aiFilter(cands, metas, state, lib) {
+  if (!cands.length) return [];
+  const recent = Object.values(state.ideas).filter(i => !i.mover && Date.now() - i.first < 3 * DAY).map(i => i.topic);
+  const list = cands.map((c, i) => `${i}. [${c.src}] ${c.title}${c.detail ? ' — ' + c.detail : ''}`).join('\n');
+  const prompt = `You are a meme coin scout. You find NEW viral things that crypto traders will turn into meme coins. Now: ${new Date().toUTCString()}.
+
+LIBRARY OF PAST WINNING MEME COINS (learn the patterns: what the meme was and where the story came from):
+${libraryText(lib)}
+
+The patterns that win: viral animal with a name (MOODENG, PNUT, WIF, FIONA, PENGUIN); internet relic/meme character (TROLL, CHILLGUY, GIGA, POPCAT); object or moment from a huge event (GTA 6 trailer -> DACITY); celebrity/founder/brand/government post (BINANCELIFE, PENGUIN, SHRUB, SI); AI/tech news-jack (O, GOAT, FARTCOIN); self-aware joke (USELESS, FARTCOIN); chain lore (CASHCAT, ROBIN, Hypurr cats on Elysium); stock/brand corporate drama (MEME vs AMC).
+The patterns that lose: sports results, plain political news, deaths/tragedies/crime/disasters, holidays, regional celebrity gossip, TV drama plots, generic news with no character, things already old. Never pick tragedies, real private people or children.
 ${learningNotes(state)}
 Already sent recently (do NOT return these again, even under another name): ${recent.join('; ') || 'none'}
 
-CHAINS right now (what is trending on each):
+CHAINS right now:
 ${metas}
-SOL = Solana/pump.fun: biggest crowd, fast news coins, rewards low-effort real photos and ultra-simple drawings.
-RH = Robinhood Chain/Pons: US retail crowd, Robinhood/stock/finance lore and cats did well; past its peak.
-ELY = Elysium/Montra: new Hyperliquid L2 (launched Nov 9 2026), early window, Hyperliquid lore (Hypurr cat, "Hype" prefix, slash-tickers) does well.
+${CHAIN_NOTES}
 
-Score honestly: 9-10 only for something genuinely exploding right now with an obvious character and ticker. Most good ideas are 6-8.
-From the list, return ONLY items that are good coin ideas (usually 0-5). Merge duplicates of the same thing.
-Return a JSON array of:
-{"i": index of the best source item, "topic": "short name", "tickers": ["BEST", "ALT1", "ALT2"] (3-8 letters, no $, exact search word first),
- "score": 1-10, "why": "one plain line: what it is and why it could work",
+RULES: Only return an item if it clearly MATCHES a winner pattern from the library - you must name the closest past winner and say why it is similar. If you cannot name a convincing match, leave it out. A crypto trader must look at it and think "that's a coin". Ask: would CT (crypto twitter) actually meme this? If not, leave it out.
+Score honestly: 9-10 only if it is exploding right now AND strongly matches a big winner. Most good ideas are 6-8.
+Return a JSON array (empty if nothing qualifies):
+{"i": index of the best source item, "topic": "short name", "tickers": ["BEST", "ALT1", "ALT2"] (3-8 letters, no $, the exact word people will search first),
+ "score": 1-10, "why": "one plain line: what it is and why CT would meme it",
+ "like": "TICKER of the closest past winner", "like_why": "short: how it is similar",
  "chain": "SOL|RH|ELY", "chain_why": "short reason",
  "art": "one line simple art idea (one character on a plain background, style)",
  "fresh": "rising|peaking|old"}
@@ -228,47 +269,84 @@ Only include score 6 or higher.
 ${list}`;
   const res = await geminiJSON(prompt);
   if (!Array.isArray(res)) return null;
-  return (res ? res : []).filter(x => x.score >= 6 && cands[x.i])
+  return res.filter(x => x.score >= 6 && cands[x.i] && x.like)
     .map(x => ({ ...x, tickers: (x.tickers || []).map(t => String(t).replace(/^\$/, '').toUpperCase()).filter(Boolean).slice(0, 3), cand: cands[x.i] }));
 }
 
-// ---------- DexScreener ----------
+// crypto news that matters to someone launching meme coins
+async function newsFilter(newsItems, lib) {
+  if (!newsItems.length) return [];
+  const list = newsItems.map((n, i) => `${i}. [${n.src}] ${n.title}${n.detail && n.detail !== n.title ? ' — ' + n.detail.slice(0, 250) : ''}`).join('\n');
+  const res = await geminiJSON(`You filter breaking news for someone who LAUNCHES meme coins on Solana (pump.fun), Robinhood Chain (Pons) and Elysium (Montra, Hyperliquid L2).
+Keep ONLY news that could change what they launch or when: a meme coin running or crashing hard; a new chain/launchpad/meme platform or big change to pump.fun, Pons, Montra, Hyperliquid, Robinhood Chain; a celebrity, brand, government or big account doing something with a coin or a meme; exchange listings of meme coins; a viral moment crypto twitter is already memeing; rules/hacks that hit meme coins.
+Drop: generic Bitcoin/ETH price moves, ETFs, macro, stocks, company earnings, adverts, giveaways, anything unrelated to meme coins.
+Return JSON array (empty if none): [{"i": index, "why": "one short line: why this matters for launching a meme coin", "urgent": true/false}]
+${list}`);
+  if (!Array.isArray(res)) return null;
+  return res.filter(r => newsItems[r.i]).map(r => ({ ...newsItems[r.i], why: r.why, urgent: !!r.urgent }));
+}
+
+// what meme is a fast-moving new coin, and does it fit a winner pattern
+async function moverFilter(movers, lib) {
+  if (!movers.length) return [];
+  const list = movers.map((m, i) => `${i}. $${m.name} on ${m.chain}, ${ago(Date.now() - m.created)} old, mc ${money(m.mc)}, 1h volume ${money(m.vol1h)}`).join('\n');
+  const res = await geminiJSON(`These brand-new coins are taking off right now. Using the library of past winners below, say what each one's meme probably is and whether it fits a winning pattern.
+LIBRARY:
+${libraryText(lib).split('\n').slice(0, 40).join('\n')}
+
+Return JSON array ONLY for coins that look like a real meme with a specific story or character (drop random letters, generic words like DOG/CAT/PEPE/AI with no specific hook, scams copying big tokens, clones of an existing coin):
+[{"i": index, "meme": "one line: what the meme probably is (say 'probably' if unsure)", "like": "closest past winner ticker", "score": 1-10}]
+${list}`);
+  if (!Array.isArray(res)) return null;
+  return res.filter(r => movers[r.i] && r.score >= 7).map(r => ({ ...movers[r.i], meme: r.meme, like: r.like, score: r.score }));
+}
+
+// ---------- DexScreener: real coins ----------
 const dexCache = {};
 async function dexSearch(q) {
-  if (!(q in dexCache)) dexCache[q] = (await get(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`, true))?.pairs || [];
-  return dexCache[q];
+  const k = q.toLowerCase();
+  if (!(k in dexCache)) dexCache[k] = (await get(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`, true))?.pairs || [];
+  return dexCache[k];
 }
-const matches = (p, tickers, topic) => {
-  const sym = p.baseToken.symbol.toLowerCase().replace(/^\$/, '');
-  return tickers.some(t => t.toLowerCase() === sym) || key(p.baseToken.name) === key(topic);
-};
-async function tickerCheck(ticker, topic) {
-  const pairs = [...await dexSearch(ticker), ...await dexSearch(topic)];
-  const res = { line: [], late: null };
-  for (const [id, label] of Object.entries(CHAINS)) {
-    const hits = pairs.filter(p => p.chainId === id && matches(p, [ticker], topic));
-    const seen = new Set(); const uniq = hits.filter(p => !seen.has(p.baseToken.address) && seen.add(p.baseToken.address));
-    const live = uniq.filter(p => (p.liquidity?.usd || 0) >= 1000 && (p.volume?.h24 || 0) >= 1000);
-    if (!uniq.length) res.line.push(`${label} ✅`);
-    else if (!live.length) res.line.push(`${label} 🟡dead`);
-    else {
-      const best = live.sort((a, b) => (b.marketCap || b.fdv || 0) - (a.marketCap || a.fdv || 0))[0];
-      const mc = best.marketCap || best.fdv || 0;
-      const recent = best.pairCreatedAt && Date.now() - best.pairCreatedAt < 3 * DAY;
-      res.line.push(`${label} ⚠️${money(mc)}${recent ? " new" : " old coin"}`);
-      if (recent && mc >= 300000 && (!res.late || mc > res.late.mc)) res.late = { mc, chain: label, url: best.url, age: best.pairCreatedAt ? Date.now() - best.pairCreatedAt : 0 };
-    }
+const symOf = p => p.baseToken.symbol.toLowerCase().replace(/^\$/, '');
+// all real coins on our 3 chains that match the tickers or the topic name, one per token
+async function findCoins(tickers, topic) {
+  const pairs = [];
+  for (const q of [...new Set([...tickers, topic])]) pairs.push(...await dexSearch(q));
+  const tks = tickers.map(t => t.toLowerCase());
+  const best = {};
+  for (const p of pairs) {
+    if (!CHAINS[p.chainId]) continue;
+    if (!tks.includes(symOf(p)) && key(p.baseToken.name) !== key(topic)) continue;
+    const a = p.baseToken.address;
+    if (!best[a] || (p.liquidity?.usd || 0) > (best[a].liquidity?.usd || 0)) best[a] = p;
   }
-  return res;
+  return Object.values(best);
+}
+const isLive = p => (p.liquidity?.usd || 0) >= 1000 && (p.volume?.h24 || 0) >= 1000;
+function coinLine(p) {
+  const mc = p.marketCap || p.fdv || 0;
+  const t = p.txns?.h1 || {};
+  return `• <b>$${esc(p.baseToken.symbol)}</b> ${CHAINS[p.chainId]} · mc ${money(mc)} · liq ${money(p.liquidity?.usd)} · vol24 ${money(p.volume?.h24)} · ${p.pairCreatedAt ? ago(Date.now() - p.pairCreatedAt) + ' old' : 'age ?'}\n` +
+    `   1h ${pct(p.priceChange?.h1)} · ${t.buys ?? '?'} buys / ${t.sells ?? '?'} sells · <a href="${esc(p.url)}">chart</a> · <code>${esc(p.baseToken.address)}</code>`;
+}
+
+// SOL safety via RugCheck (free)
+async function rugcheck(mint) {
+  const j = await get(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, true);
+  if (!j) return '';
+  const bad = (j.risks || []).filter(r => r.level === 'danger').map(r => r.name);
+  const warn = (j.risks || []).filter(r => r.level === 'warn').map(r => r.name);
+  return `${bad.length ? '🔴' : warn.length ? '🟡' : '🟢'} RugCheck${bad.length || warn.length ? '' : ' clean'}${bad.length ? ' · DANGER: ' + bad.slice(0, 3).join(', ') : ''}${warn.length ? ' · warn: ' + warn.slice(0, 3).join(', ') : ''}`;
 }
 
 // ---------- Telegram ----------
 const CHAT = () => process.env.TELEGRAM_CHAT_ID;
 const printMode = () => !process.env.TELEGRAM_TOKEN || !CHAT();
 async function tg(method, body, isForm = false) {
-  if (printMode()) { console.log(`\n[${method}]`, isForm ? '(file)' : JSON.stringify(body).slice(0, 1500)); return { ok: true, result: [] }; }
+  if (printMode()) { if (method !== 'getUpdates') console.log(`\n[${method}]`, isForm ? '(file)' : JSON.stringify(body).slice(0, 300)); return { ok: true, result: [] }; }
   for (let a = 0; a < 4; a++) {
-    if (a) await sleep(10000);
+    if (a) await sleep(8000);
     try {
       const r = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/${method}`, isForm
         ? { method: 'POST', body }
@@ -276,36 +354,41 @@ async function tg(method, body, isForm = false) {
       const j = await r.json().catch(() => ({}));
       if (r.ok) return j;
       console.error('telegram', method, r.status, JSON.stringify(j).slice(0, 200));
+      if (r.status === 429) { await sleep(((j.parameters?.retry_after) || 5) * 1000); continue; }
       if (r.status === 400 || r.status === 403) return { ok: false, bad: true };
     } catch (e) { console.error('telegram', e.message); }
   }
-  return null; // network/server failure
+  return null;
 }
-async function sendText(text, { loud = false } = {}) {
+async function sendText(text, { loud = false, markup } = {}) {
   if (printMode()) { console.log('\n' + text.replace(/<[^>]+>/g, '') + '\n'); return true; }
   const parts = []; let cur = '';
   for (const block of text.split('\n\n')) { if ((cur + block).length > 3900) { parts.push(cur); cur = ''; } cur += block + '\n\n'; }
   if (cur.trim()) parts.push(cur);
-  for (const p of parts) if (!(await tg('sendMessage', { chat_id: CHAT(), text: p, parse_mode: 'HTML', disable_web_page_preview: true, disable_notification: !loud }))?.ok) return false;
+  for (let i = 0; i < parts.length; i++) {
+    const body = { chat_id: CHAT(), text: parts[i], parse_mode: 'HTML', disable_web_page_preview: true, disable_notification: !loud };
+    if (markup && i === parts.length - 1) body.reply_markup = markup;
+    if (!(await tg('sendMessage', body))?.ok) return false;
+  }
   return true;
 }
-const buttons = id => ({ inline_keyboard: [[{ text: '🎨 Make art', callback_data: `art:${id}` }, { text: '👍', callback_data: `up:${id}` }, { text: '👎', callback_data: `dn:${id}` }]] });
-async function sendIdea(caption, image, id, loud) {
+const ideaButtons = id => ({ inline_keyboard: [[{ text: '🎨 Make art', callback_data: `art:${id}` }, { text: '👍', callback_data: `up:${id}` }, { text: '👎', callback_data: `dn:${id}` }]] });
+const rateButtons = id => ({ inline_keyboard: [[{ text: '👍', callback_data: `up:${id}` }, { text: '👎', callback_data: `dn:${id}` }]] });
+async function sendWithPhoto(caption, image, markup, loud) {
   if (printMode()) { console.log('\n[photo: ' + (image || 'none') + ']\n' + caption.replace(/<[^>]+>/g, '') + '\n'); return true; }
-  const base = { chat_id: CHAT(), parse_mode: 'HTML', reply_markup: buttons(id), disable_notification: !loud };
   if (image) {
-    const r = caption.length <= 1024 ? await tg('sendPhoto', { ...base, photo: image, caption }) : await (async () => {
-      // too long for a photo caption: photo first, full text below it
-      const p = await tg('sendPhoto', { chat_id: CHAT(), photo: image, disable_notification: !loud });
-      return p?.ok ? { ok: false } : p;
-    })();
-    if (r?.ok) return true;
-    if (r === null) return false;
+    if (caption.length <= 1024) {
+      const r = await tg('sendPhoto', { chat_id: CHAT(), photo: image, caption, parse_mode: 'HTML', reply_markup: markup, disable_notification: !loud });
+      if (r?.ok) return true;
+      if (r === null) return false;
+    } else {
+      const r = await tg('sendPhoto', { chat_id: CHAT(), photo: image, disable_notification: !loud });
+      if (r === null) return false;
+    }
   }
-  return !!(await tg('sendMessage', { ...base, text: caption, disable_web_page_preview: true }))?.ok;
+  return sendText(caption, { loud, markup });
 }
 
-// picture for an idea: source image, else Bing News search, else Wikipedia thumbnail
 async function findImage(topic, cand) {
   if (cand?.image) return cand.image;
   const n = [...await bingNews(topic), ...(cand ? await bingNews(cand.title.slice(0, 80)) : [])];
@@ -323,7 +406,7 @@ async function makeArt(idea) {
       const r = await fetch(idea.image, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) });
       const type = (r.headers.get('content-type') || '').split(';')[0];
       if (r.ok && type.startsWith('image/')) parts.push({ inline_data: { mime_type: type, data: Buffer.from(await r.arrayBuffer()).toString('base64') } });
-    } catch { /* no reference, fine */ }
+    } catch { /* no reference */ }
   }
   parts.push({ text: `Make a meme coin mascot image for $${idea.tickers[0]} (${idea.topic}).
 Idea: ${idea.art}
@@ -346,55 +429,51 @@ async function handleButtons(state) {
     const [act, id] = String(cq.data).split(':');
     const idea = state.ideas[id];
     await tg('answerCallbackQuery', { callback_query_id: cq.id, text: act === 'art' ? 'Making art…' : 'Saved' });
-    if (!idea) { await sendText('That idea is too old, sorry.'); continue; }
+    if (!idea) { await sendText('That one is too old, sorry.'); continue; }
     if (act === 'up' || act === 'dn') {
       state.feedback = state.feedback.filter(f => f.id !== id);
-      state.feedback.push({ id, topic: idea.topic, r: act, t: Date.now() });
+      state.feedback.push({ id, topic: idea.mover ? `new coin $${idea.topic} (${idea.why || ''})` : idea.topic, r: act, t: Date.now() });
       await sendText(act === 'up' ? `👍 Got it — more like <b>${esc(idea.topic)}</b>.` : `👎 Got it — fewer like <b>${esc(idea.topic)}</b>.`);
-    } else if (act === 'art') {
+    } else if (act === 'art' && !idea.mover) {
       await sendText(`🎨 Making art for <b>$${esc(idea.tickers[0])}</b> (${esc(idea.topic)})… about 30 seconds.`);
       const art = await makeArt(idea);
       if (!art) { await sendText(`Couldn't make art for ${esc(idea.topic)} this time — press 🎨 again to retry.`); continue; }
       const fd = new FormData();
       fd.append('chat_id', CHAT());
       fd.append('caption', `$${idea.tickers[0]} — test art for ${idea.topic}. Press 🎨 again for another version.`);
-      fd.append('reply_markup', JSON.stringify(buttons(id)));
+      fd.append('reply_markup', JSON.stringify(ideaButtons(id)));
       fd.append('photo', new Blob([art.buf], { type: art.mime }), 'art.png');
       await tg('sendPhoto', fd, true);
     }
   }
 }
 
-// ---------- 🚨 race watch + scorecard data ----------
+// ---------- 🚨 race watch ----------
 async function raceWatch(state, now) {
   const alerts = [];
-  const hourly = new Date(now).getUTCMinutes() < 5 || FORCE;
-  for (const [id, idea] of Object.entries(state.ideas)) {
+  for (const idea of Object.values(state.ideas)) {
+    if (idea.mover) continue;
     const age = now - idea.first;
-    if (age > 7 * DAY || (age > 2 * DAY && !hourly)) continue;
-    const pairs = [];
-    for (const q of [...new Set([idea.tickers[0], idea.topic])]) pairs.push(...await dexSearch(q));
+    if (age > 7 * DAY || (age > DAY && now - (idea.lastRace || 0) < HOUR)) continue;
+    idea.lastRace = now;
+    // only the best ticker + exact topic name, so generic words don't over-count
+    const coins = await findCoins(idea.tickers.slice(0, 1), idea.topic);
     idea.seenPairs ||= []; idea.raceAlerts ||= 0;
-    for (const p of pairs) {
-      if (!CHAINS[p.chainId] || !matches(p, idea.tickers, idea.topic)) continue;
+    for (const p of coins) {
       const mc = p.marketCap || p.fdv || 0;
-      const addr = p.baseToken.address;
-      // track the best coin made AFTER the alert (for the scorecard)
-      if (p.pairCreatedAt && p.pairCreatedAt > idea.first - 10 * MIN) {
-        if (mc > (idea.bestMc || 0)) { idea.bestMc = mc; idea.bestUrl = p.url; idea.bestChain = CHAINS[p.chainId]; }
-        if (!idea.seenPairs.includes(addr)) {
-          idea.seenPairs.push(addr);
-          idea.coins = (idea.coins || 0) + 1;
-          if (age < 2 * DAY && (idea.raceAlerts || 0) < 3 && ++idea.raceAlerts) alerts.push(`🚨 <b>RACE: $${esc(p.baseToken.symbol)} launched on ${CHAINS[p.chainId]}</b> ${ago(now - p.pairCreatedAt)} ago — now ${money(mc)}, liquidity ${money(p.liquidity?.usd)}\nFor your idea: <b>${esc(idea.topic)}</b> · <a href="${esc(p.url)}">chart</a>`);
-        }
-      }
+      if (!p.pairCreatedAt || p.pairCreatedAt < idea.first - 10 * MIN) continue;
+      if (mc > (idea.bestMc || 0)) { idea.bestMc = mc; idea.bestUrl = p.url; idea.bestChain = CHAINS[p.chainId]; }
+      if (idea.seenPairs.includes(p.baseToken.address)) continue;
+      idea.seenPairs.push(p.baseToken.address);
+      idea.coins = (idea.coins || 0) + 1;
+      if (age < 2 * DAY && idea.raceAlerts < 3) { idea.raceAlerts++; alerts.push(`🚨 <b>RACE: someone launched $${esc(p.baseToken.symbol)} for your idea "${esc(idea.topic)}"</b>\n${coinLine(p)}`); }
     }
   }
   return alerts;
 }
 
 async function weeklyScorecard(state, now) {
-  const week = Object.values(state.ideas).filter(i => now - i.first < 7 * DAY);
+  const week = Object.values(state.ideas).filter(i => !i.mover && now - i.first < 7 * DAY);
   if (!week.length) return '';
   const withCoin = week.filter(i => i.coins > 0);
   const big = week.filter(i => i.bestMc >= 250000), huge = week.filter(i => i.bestMc >= 1e6);
@@ -403,10 +482,10 @@ async function weeklyScorecard(state, now) {
   const byScore = {};
   for (const i of week) { const b = i.score >= 9 ? '9-10' : i.score >= 8 ? '8' : i.score >= 7 ? '7' : '6'; const s = (byScore[b] ||= { n: 0, big: 0 }); s.n++; if (i.bestMc >= 250000) s.big++; }
   const top = week.filter(i => i.bestMc).sort((a, b) => b.bestMc - a.bestMc).slice(0, 5);
-  const liked = state.feedback.filter(f => now - f.t < 7 * DAY);
+  const fb = state.feedback.filter(f => now - f.t < 7 * DAY);
   return `<b>📊 Weekly scorecard</b>
 Ideas sent: ${week.length} · got a coin made: ${withCoin.length} · coin passed $250K: ${big.length} · passed $1M: ${huge.length}
-👍 ${liked.filter(f => f.r === 'up').length} · 👎 ${liked.filter(f => f.r === 'dn').length}
+👍 ${fb.filter(f => f.r === 'up').length} · 👎 ${fb.filter(f => f.r === 'dn').length}
 
 <b>By source</b> (ideas / got coin / $250K+)
 ${Object.entries(bySrc).sort((a, b) => b[1].n - a[1].n).map(([s, v]) => `${esc(s)}: ${v.n} / ${v.coin} / ${v.big}`).join('\n')}
@@ -418,118 +497,183 @@ ${Object.entries(byScore).map(([s, v]) => `${s}/10: ${v.n} / ${v.big}`).join('\n
 ${top.map(i => `• ${esc(i.topic)}: ${money(i.bestMc)} on ${i.bestChain} · <a href="${esc(i.bestUrl)}">chart</a>`).join('\n') || 'none yet'}`;
 }
 
-// ---------- main ----------
-async function main() {
+// ---------- one check ----------
+const NEWS_SLOT = s => NEWS_QUERIES[s % NEWS_QUERIES.length];
+async function tick(state, lib, n) {
   const now = Date.now();
-  const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {};
-  state.trends ||= {}; state.ideas ||= {}; state.news ||= {}; state.judged ||= {}; state.feedback ||= [];
-  if (!Array.isArray(state.feedback)) state.feedback = [];
-  for (const k of ['trends', 'news', 'judged']) for (const [x, v] of Object.entries(state[k])) if (now - (v.last || v.first || v) > 3 * DAY) delete state[k][x];
-  for (const [x, v] of Object.entries(state.ideas)) { if (now - v.first > 30 * DAY) delete state.ideas[x]; else { v.score ??= 7; v.src ??= 'older version'; } }
-  state.feedback = state.feedback.slice(-200);
   const save = () => { fs.mkdirSync(new URL('./state/', import.meta.url), { recursive: true }); fs.writeFileSync(STATE_FILE, JSON.stringify(state)); };
+  let failed = false;
 
-  // 1. buttons first, so art/ratings come back as fast as possible
-  await handleButtons(state);
-  save();
+  await handleButtons(state); save();
 
-  // 2. scan
-  const doWiki = FORCE || now - (state.lastWiki || 0) > HOUR;
-  const viral = (await Promise.all([
-    xTrends('united-states', 'US'), xTrends('united-kingdom', 'UK'),
-    googleTrends('US'), googleTrends('GB'), rotatingNews(now), knowYourMeme(), bluesky(),
-    doWiki ? wikipedia() : [], youtube(), reddit(),
-  ])).flat().filter(c => c.title);
-  if (doWiki) state.lastWiki = now;
+  // --- sources (fast ones every tick, slow ones less often) ---
+  const due = (k, ms) => FORCE || now - (state.due[k] || 0) >= ms ? (state.due[k] = now, true) : false;
+  const newsQ = FORCE ? NEWS_QUERIES : [NEWS_SLOT(state.newsSlot = (state.newsSlot || 0) + 1)];
+  const [viralLists, tgLists] = await Promise.all([
+    Promise.all([
+      due('x', 10 * MIN) ? Promise.all([xTrends('united-states', 'US'), xTrends('united-kingdom', 'UK')]).then(a => a.flat()) : [],
+      googleTrends('US'), googleTrends('GB'), knowYourMeme(), bluesky(),
+      (async () => { const o = []; for (const q of newsQ) { o.push(...await bingNews(q)); await sleep(500); } return o.filter(x => !x.started || now - x.started < 2 * DAY); })(),
+      due('wiki', HOUR) ? wikipedia() : [],
+    ]),
+    Promise.all(TG_CHANNELS.map(c => tgChannel(c, state))),
+  ]);
+  const tgPosts = tgLists.flat();
+  const viral = [...viralLists.flat(), ...tgPosts].filter(c => c.title);
 
   for (const c of viral) {
     const k = key(c.title); if (!k) continue;
-    const t = state.trends[k] ||= { first: now, runs: 0, srcs: [], bestRank: 999 };
-    if (t.last !== now) t.runs++;
+    const t = state.trends[k] ||= { first: now, srcs: [] };
     t.last = now;
     if (!t.srcs.includes(c.src)) t.srcs.push(c.src);
-    if (c.rank) t.bestRank = Math.min(t.bestRank, c.rank);
   }
   const fresh = []; const dup = new Set();
   for (const c of viral) { const k = key(c.title); if (!k || state.judged[k] || dup.has(k)) continue; dup.add(k); fresh.push(c); }
-  console.error(`${viral.length} trend items, ${fresh.length} new to judge`);
 
-  const [sol, rh, ely] = await Promise.all([chainTrending('solana'), chainTrending('robinhood'), chainTrending('elysium')]);
-  const metas = [['SOL', sol], ['RH', rh], ['ELY', ely]].map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${Math.round(x.ch || 0)}%`).join(', ')}`).join('\n');
-
-  const picks = []; const judgedOk = [];
-  for (let i = 0; i < fresh.length; i += 150) {
-    const chunk = fresh.slice(i, i + 150);
-    const r = await aiFilter(chunk, metas, state);
-    if (r === null) { console.error('AI failed for', chunk.length, 'items - will retry next run'); continue; }
-    picks.push(...r); judgedOk.push(...chunk);
+  // chain context (every 10 min)
+  if (due('chains', 10 * MIN) || !state.metas) {
+    const [sol, rh, ely] = [await chainTrending('solana'), await chainTrending('robinhood'), await chainTrending('elysium')];
+    state.chainTop = { SOL: sol.slice(0, 6), RH: rh.slice(0, 6), ELY: ely.slice(0, 6) };
+    state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${pct(x.ch24)}`).join(', ')}`).join('\n');
   }
 
-  // 3. send new ideas
-  let failed = false;
-  const newPicks = picks.filter(p => !state.ideas[idOf(p.topic)]).sort((a, b) => b.score - a.score).slice(0, 6);
+  // --- ideas ---
+  const judgedOk = [];
+  const picks = [];
+  for (let i = 0; i < fresh.length; i += 120) {
+    const chunk = fresh.slice(i, i + 120);
+    const r = await aiFilter(chunk, state.metas, state, lib);
+    if (r === null) { console.error('AI failed for', chunk.length, 'items - retry next tick'); continue; }
+    picks.push(...r); judgedOk.push(...chunk);
+  }
+  const newPicks = picks.filter(p => !state.ideas[idOf(p.topic)]).sort((a, b) => b.score - a.score);
   for (const p of newPicks) {
     const id = idOf(p.topic);
     const tr = state.trends[key(p.cand.title)] || {};
-    const checks = [];
-    for (const t of p.tickers) checks.push([t, await tickerCheck(t, p.topic)]);
-    const late = checks.map(c => c[1].late).filter(Boolean).sort((a, b) => b.mc - a.mc)[0];
+    const coins = (await findCoins(p.tickers, p.topic)).filter(isLive).sort((a, b) => (b.marketCap || b.fdv || 0) - (a.marketCap || a.fdv || 0));
+    const recentBig = coins.find(c => c.pairCreatedAt && now - c.pairCreatedAt < 3 * DAY && (c.marketCap || c.fdv || 0) >= 300000);
+    const taken = new Set(coins.map(c => `${symOf(c)}|${c.chainId}`));
+    const open = p.tickers.map(t => ({ t, chains: Object.entries(CHAINS).filter(([id]) => !taken.has(`${t.toLowerCase()}|${id}`)).map(([, l]) => l) })).filter(o => o.chains.length);
     const firstSeen = Math.min(tr.first || now, p.cand.started || now);
     let badge = p.fresh === 'rising' ? '🚀 RISING' : p.fresh === 'peaking' ? '⏳ PEAKING' : '🐢 OLD';
     if (badge.includes('RISING') && now - firstSeen > 12 * HOUR && (tr.srcs || []).length < 2) badge = '⏳ PEAKING';
-    if (late) badge = '⚠️ LATE';
-    const loud = p.score >= LOUD_SCORE && !late;
-    const icon = late ? '⚠️' : loud ? '🚨' : p.score >= 8 ? '🔥' : '👀';
+    if (recentBig) badge = '⚠️ LATE';
+    const loud = p.score >= LOUD_SCORE && !recentBig;
+    const icon = recentBig ? '⚠️' : loud ? '🚨' : p.score >= 8 ? '🔥' : '👀';
     const src = p.cand.link ? `<a href="${esc(p.cand.link)}">${esc(p.cand.src)}</a>` : esc(p.cand.src);
-    let cap = `${icon} <b>${p.score}/10 ${esc(p.topic)}</b>  ${badge}\n${esc(p.why)}\n\n`;
-    cap += `<b>Tickers:</b>\n${checks.map(([t, c]) => `$${esc(t)}  ${c.line.join(' ')}`).join('\n')}\n`;
-    cap += `<b>Best chain:</b> ${esc(p.chain)} — ${esc(p.chain_why)}\n`;
-    cap += `<b>Art:</b> ${esc(p.art)}\n`;
-    if (late) cap += `<b>Late:</b> a coin for this is already ${money(late.mc)} on ${late.chain}${late.age ? `, made ${ago(late.age)} ago` : ''} — <a href="${esc(late.url)}">chart</a>\n`;
+    let cap = `${icon} <b>${p.score}/10 ${esc(p.topic)}</b>  ${badge}\n${esc(p.why)}\n🧬 Like <b>$${esc(p.like)}</b> — ${esc(p.like_why)}\n\n`;
+    if (coins.length) cap += `<b>Live coins already out:</b>\n${coins.slice(0, 3).map(coinLine).join('\n')}\n`;
+    else cap += `<b>No live coin yet — you could be first.</b>\n`;
+    if (open.length) cap += `<b>Open tickers:</b> ${open.map(o => `$${esc(o.t)} (${o.chains.join(' ')})`).join(' · ')}\n`;
+    cap += `<b>Best chain:</b> ${esc(p.chain)} — ${esc(p.chain_why)}\n<b>Art:</b> ${esc(p.art)}\n`;
     cap += `\n${src} · first seen ${ago(now - firstSeen)} ago · in ${(tr.srcs || [p.cand.src]).length} source(s)`;
     const image = await findImage(p.topic, p.cand);
-    state.ideas[id] = { first: now, topic: p.topic, tickers: p.tickers, art: p.art, why: p.why, score: p.score, src: p.cand.src, image, srcs: (tr.srcs || []).length };
-    if (!await sendIdea(cap, image, id, loud)) { delete state.ideas[id]; failed = true; break; }
+    state.ideas[id] = { first: now, topic: p.topic, tickers: p.tickers, art: p.art, why: p.why, like: p.like, score: p.score, src: p.cand.src, image, srcs: (tr.srcs || []).length };
+    if (!await sendWithPhoto(cap, image, ideaButtons(id), loud)) { delete state.ideas[id]; failed = true; break; }
     save();
   }
 
-  // spreading: an idea already sent has reached more places
-  if (!failed) for (const [id, idea] of Object.entries(state.ideas)) {
-    if (idea.rerun || now - idea.first > DAY) continue;
+  // spreading
+  if (!failed) for (const idea of Object.values(state.ideas)) {
+    if (idea.mover || idea.rerun || now - idea.first > DAY) continue;
     const words = [key(idea.topic), ...idea.tickers.map(key)].filter(w => w.length >= 4);
-    const srcs = new Set(viral.filter(c => words.some(w => key(c.title).includes(w))).map(c => c.src));
+    const srcs = new Set(Object.entries(state.trends).filter(([k, t]) => t.last === now && words.some(w => k.includes(w))).flatMap(([, t]) => t.srcs));
     if (srcs.size >= Math.max(3, (idea.srcs || 1) + 2)) {
       if (await sendText(`📣 <b>STILL SPREADING: ${esc(idea.topic)}</b>\nNow in ${srcs.size} places: ${esc([...srcs].join(', '))}\nTickers: ${idea.tickers.map(t => '$' + esc(t)).join(' ')}`, { loud: true })) idea.rerun = true;
     }
   }
 
-  // 4. race watch
+  // --- 📰 crypto news as it comes out (RSS every 3 min + Telegram channel posts every tick) ---
   if (!failed) {
-    const alerts = await raceWatch(state, now);
-    for (const a of alerts) if (!await sendText(a, { loud: true })) { failed = true; break; }
-  }
-
-  // 5. hourly digest (chains + crypto news), weekly scorecard
-  if (!failed && (FORCE || now - (state.lastDigest || 0) > 55 * MIN)) {
-    const [news, cg] = await Promise.all([cryptoNews(), geckoTrending()]);
-    const freshNews = news.filter(n => !state.news[key(n.title)]).slice(0, 5);
-    if (freshNews.length || now - (state.lastDigest || 0) > 4 * HOUR || FORCE) {
-      let digest = `<b>📈 Trending on chains — ${new Date(now).toISOString().slice(11, 16)} UTC</b>\n` +
-        [['Solana', sol], ['Robinhood', rh], ['Elysium', ely]].map(([n, l]) => `<b>${n}:</b> ` + (l.length ? l.slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${x.ch >= 0 ? '+' : ''}${Math.round(x.ch || 0)}%`).join(', ') : 'no data')).join('\n');
-      if (cg.length) digest += `\n\n<b>🌍 CoinGecko trending:</b> ${cg.map(esc).join(', ')}`;
-      if (freshNews.length) digest += `\n\n<b>📰 Crypto news</b>\n${freshNews.map(n => `• <a href="${esc(n.link)}">${esc(n.title)}</a>`).join('\n')}`;
-      if (await sendText(digest)) { freshNews.forEach(n => state.news[key(n.title)] = now); state.lastDigest = now; } else failed = true;
+    const rss = due('rss', 3 * MIN) ? await cryptoRss() : [];
+    const newsNew = [...rss.filter(n => !n.started || now - n.started < 6 * HOUR), ...tgPosts].filter(n => !state.news[key(n.title)]);
+    const kept = await newsFilter(newsNew, lib);
+    if (kept !== null) {
+      for (const n of kept) {
+        const msg = `📰 <b>${esc(n.title)}</b>\n<i>${esc(n.why)}</i>\n<a href="${esc(n.link)}">${esc(n.src)}</a>${n.started ? ` · ${ago(now - n.started)} ago` : ''}`;
+        if (!await sendText(msg, { loud: n.urgent })) { failed = true; break; }
+        state.news[key(n.title)] = now;
+      }
+      if (!failed) for (const n of newsNew) state.news[key(n.title)] ||= now;
     }
   }
+
+  // --- 🔴 live movers (every 2 min) ---
+  if (!failed && due('movers', 2 * MIN)) {
+    const cand = [];
+    for (const net of Object.keys(CHAINS)) {
+      for (const p of await chainTrending(net, '5m')) {
+        const age = now - p.created;
+        const minMc = net === 'solana' ? 50000 : 20000, minVol = net === 'solana' ? 30000 : 10000;
+        if (age > 12 * HOUR || p.mc < minMc || p.mc > 20e6 || p.vol1h < minVol || p.liq < 5000 || p.buys1h <= p.sells1h) continue;
+        if (state.movers[p.token]) continue;
+        cand.push(p);
+      }
+    }
+    const kept = await moverFilter(cand, lib);
+    if (kept !== null) {
+      for (const m of cand) state.movers[m.token] ||= now;
+      for (const m of kept) {
+        const id = idOf('mover ' + m.token);
+        const safety = m.net === 'solana' ? await rugcheck(m.token) : '';
+        const msg = `🔴 <b>LIVE MOVER: $${esc(m.name)}</b> on ${m.chain} · ${ago(now - m.created)} old · ${m.score}/10\n${esc(m.meme)}\n🧬 Like <b>$${esc(m.like)}</b>\n` +
+          `mc ${money(m.mc)} · liq ${money(m.liq)} · 1h vol ${money(m.vol1h)} · 1h ${pct(m.ch1h)}\n1h: ${m.buys1h} buys / ${m.sells1h} sells\n` +
+          (safety ? safety + '\n' : '') + `<a href="${m.link}">chart</a> · <code>${esc(m.token)}</code>`;
+        state.ideas[id] = { first: now, topic: m.name, tickers: [m.name], why: m.meme, mover: true, score: m.score, src: 'Live mover' };
+        if (!await sendText(msg, { loud: m.score >= LOUD_SCORE, markup: rateButtons(id) })) { failed = true; break; }
+      }
+    }
+  }
+
+  // --- race watch (every 5 min) ---
+  if (!failed && due('race', 5 * MIN)) for (const a of await raceWatch(state, now)) if (!await sendText(a, { loud: true })) { failed = true; break; }
+
+  // --- hourly chain + metas digest ---
+  if (!failed && due('digest', HOUR)) {
+    const top = state.chainTop || {};
+    const themes = await geminiJSON(`Trending meme coins right now per chain:\n${state.metas}\nIn max 3 short lines, what themes/metas are forming on each chain (e.g. "hippo coins", "slash tickers", "stock-paired memes")? Only say what is visible in the list. Return JSON: {"lines": ["..."]}`);
+    let d = `<b>📈 Chains — ${new Date(now).toISOString().slice(11, 16)} UTC</b>\n` +
+      [['Solana', top.SOL], ['Robinhood', top.RH], ['Elysium', top.ELY]].map(([n, l]) => `<b>${n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${pct(x.ch24)}`).join(', ') || 'no data')).join('\n');
+    if (themes?.lines?.length) d += `\n\n<b>🧭 Metas forming:</b>\n${themes.lines.map(l => '• ' + esc(l)).join('\n')}`;
+    if (!await sendText(d)) failed = true;
+  }
+
+  // --- weekly: scorecard + library refresh ---
   if (!failed && now - (state.lastScorecard || now) > 7 * DAY) {
     const sc = await weeklyScorecard(state, now);
-    if (!sc || await sendText(sc, { loud: true })) state.lastScorecard = now;
+    const added = await refreshLibrary(lib);
+    if (!sc || await sendText(sc + (added ? `\n\n📚 Added ${added} new winning coins to the library.` : ''), { loud: true })) state.lastScorecard = now;
   }
   state.lastScorecard ||= now;
 
   if (!failed) for (const c of judgedOk) state.judged[key(c.title)] = now;
   save();
-  if (failed) { console.error('Telegram failed - will retry next run'); process.exit(1); }
+  console.error(`tick ${n}: ${viral.length} items, ${fresh.length} new, ${newPicks.length} ideas${failed ? ', TELEGRAM FAILED' : ''}`);
+  return !failed;
+}
+
+// ---------- main ----------
+async function main() {
+  const start = Date.now();
+  const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {};
+  for (const k of ['trends', 'ideas', 'news', 'judged', 'movers', 'tgSeen', 'due']) state[k] ||= {};
+  if (!Array.isArray(state.feedback)) state.feedback = [];
+  const now = Date.now();
+  for (const k of ['trends', 'news', 'judged', 'movers']) for (const [x, v] of Object.entries(state[k])) if (now - (v.last || v.first || v) > 3 * DAY) delete state[k][x];
+  for (const [x, v] of Object.entries(state.ideas)) { if (now - v.first > 30 * DAY) delete state.ideas[x]; else { v.score ??= 7; v.src ??= 'older version'; v.tickers ||= [v.topic]; } }
+  state.feedback = state.feedback.slice(-300);
+  const lib = loadLibrary();
+
+  let n = 0, ok = true;
+  do {
+    const t0 = Date.now();
+    ok = await tick(state, lib, ++n) && ok;
+    if (ONCE) break;
+    const rest = TICK_MS - (Date.now() - t0);
+    if (Date.now() - start + Math.max(rest, 0) + 30000 > LOOP_MS) break;
+    if (rest > 0) await sleep(rest);
+  } while (true);
+  if (!ok) { console.error('Telegram failed at least once - unsent items retry next run'); process.exit(1); }
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

@@ -1,0 +1,402 @@
+[
+ {
+  "ticker": "BONK",
+  "chain": "SOL",
+  "peak": 3500000000,
+  "type": "animal (dog) / Solana community airdrop",
+  "story": "Purpose-built project by anonymous Solana devs after FTX collapse (no pre-existing meme)",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "WIF",
+  "chain": "SOL",
+  "peak": 4580000000,
+  "type": "animal (dog)",
+  "story": "Instagram photo of Shiba Inu 'Achi' in knitted pink beanie (owners' account @achi_peach, Korea); 'dogwifhat' meme attributed to Fortnite streamer Issa (2019)",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "MYRO",
+  "chain": "SOL",
+  "peak": 400000000,
+  "type": "animal (dog) / person (Solana co-founder Raj Gokal's pet)",
+  "story": "Raj Gokal's real dog named Myro; first public appearance unknown",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "POPCAT",
+  "chain": "SOL",
+  "peak": 2000000000,
+  "type": "animal (cat)",
+  "story": "'Pop Cat' meme of cat Oatmeal, viral on Instagram music edits; popcat.click game by Univ. of Sheffield students",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "PONKE",
+  "chain": "SOL",
+  "peak": 500000000,
+  "type": "character (original degen-gambler monkey mascot)",
+  "story": "Original character created by project team; no pre-existing viral story found",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "BOME",
+  "chain": "SOL",
+  "peak": 1500000000,
+  "type": "joke/meme-culture (artist-driven: Pepe artist Darkfarms)",
+  "story": "Darkfarms' own X post sharing a Solana presale address",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "SLERF",
+  "chain": "SOL",
+  "peak": 500000000,
+  "type": "animal (sloth) + news (viral accidental presale burn)",
+  "story": "Project X account @Slerfsol (dev 'Grumpy')",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "MEW",
+  "chain": "SOL",
+  "peak": 1000000000,
+  "type": "animal/character (cat vs dog coins)",
+  "story": "Original team concept (no external story)",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "GIGA",
+  "chain": "SOL",
+  "peak": 1000000000,
+  "type": "character/person (Gigachad meme, Ernest Khalimov)",
+  "story": "2017 Krista Sudmalis 'Sleek'n'Tears' photo project (meme origin); coin's first post unknown",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "FWOG",
+  "chain": "SOL",
+  "peak": 500000000,
+  "type": "animal/character (frog art by @Groowut) + news (artist's coin FLOG got rugged)",
+  "story": "FLOG (Flog the Frog) coin on Pump.fun dumped by its team; CT rallied behind the artist",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "MOODENG",
+  "chain": "SOL",
+  "peak": 600000000,
+  "type": "animal",
+  "story": "Khao Kheow Open Zoo official Facebook page (photos of pygmy hippos); viral Sept 2024",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "GOAT",
+  "chain": "SOL",
+  "peak": 1200000000,
+  "type": "AI",
+  "story": "Andy Ayrey's Infinite Backrooms (Claude Opus conversations) -> 'Goatse Gospel', promoted by Truth Terminal on X",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "FARTCOIN",
+  "chain": "SOL",
+  "peak": 2500000000,
+  "type": "joke / AI",
+  "story": "Truth Terminal brainstorming with another AI agent; picked 'Fartcoin'",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "AI16Z",
+  "chain": "SOL",
+  "peak": 2390000000,
+  "type": "AI",
+  "story": "Builder project: Shaw Walters' Eliza agent framework + a16z parody AI VC fund ('Marc AIndreessen')",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "PNUT",
+  "chain": "SOL",
+  "peak": 2270000000,
+  "type": "animal / news",
+  "story": "News of NYSDEC seizing and euthanizing pet squirrel Peanut (and raccoon Fred)",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "ACT",
+  "chain": "SOL",
+  "peak": 900000000,
+  "type": "AI",
+  "story": "Act I project (AI-as-character research/fundraising project) by pseudonymous X user Amp",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "CHILLGUY",
+  "chain": "SOL",
+  "peak": 600000000,
+  "type": "character",
+  "story": "Phillip Banks' 'Chill Guy' artwork on X; later viral on TikTok",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "ZEREBRO",
+  "chain": "SOL",
+  "peak": 784000000,
+  "type": "AI",
+  "story": "Zerebro autonomous AI agent (content/rap/NFTs) by Blorm Inc.",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "TRUMP",
+  "chain": "SOL",
+  "peak": 15000000000,
+  "type": "person",
+  "story": "Official announcement by Donald Trump on Truth Social and X",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "USELESS",
+  "chain": "SOL",
+  "peak": 400000000,
+  "type": "joke",
+  "story": "Self-contained satire concept (a coin that is openly 'useless'); no external story",
+  "src": "metascanner",
+  "approx": true
+ },
+ {
+  "ticker": "AI",
+  "chain": "RH",
+  "peak": 325000000,
+  "type": "stock-paired meme (NVDA) / AI + Inu dog",
+  "story": "long.xyz launch; BlockBeats/GMGN first coverage Jul 23 2026",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "CASHCAT",
+  "chain": "RH",
+  "peak": 254000000,
+  "type": "Robinhood lore / chain mascot cat",
+  "story": "Robinhood's pre-rebrand name 'CashCat' (New Yorker profile; 2021 Vlad Tenev post cited by project site)",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "BONER",
+  "chain": "RH",
+  "peak": 70000000,
+  "type": "stock-paired meme (HIMS) / float-squeeze joke",
+  "story": "long.xyz launch paired with tokenized HIMS (added to chain Jul 28)",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "PIPEDOG",
+  "chain": "RH",
+  "peak": 75000000,
+  "type": "dog meme / launchpad base token / AI-agent-deployed narrative",
+  "story": "PipePad launch; 'Wock'-linked figure claimed an AI agent deployed it",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "HMM",
+  "chain": "RH",
+  "peak": 21560000,
+  "type": "cat meme (thinking emoji) - 'WIF of Robinhood Chain'",
+  "story": "Pons launch; described as developer test token turned community takeover (tangem)",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "TENDIES",
+  "chain": "RH",
+  "peak": 27000000,
+  "type": "WallStreetBets / retail-trader culture",
+  "story": "WSB 'tendies' slang; Yoink launchpad",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "MUSEBOOK",
+  "chain": "RH",
+  "peak": 27000000,
+  "type": "AI-agent social network / Meta Muse narrative (META-paired)",
+  "story": "Meta launched Muse personal AI agent (Sep 8 2026); musebook.me = social hangout for Muse agents",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "MONITOR",
+  "chain": "RH",
+  "peak": 13000000,
+  "type": "stock-paired meme (PLTR) / 'monitoring the situation' internet meme",
+  "story": "'Monitoring the Situation' meme page (X account since 2024-11-26) turned token on long.xyz",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "ROBINCAT",
+  "chain": "RH",
+  "peak": 12500000,
+  "type": "Robinhood mascot cat + USDG reflection rewards",
+  "story": "pixel-art cat in green hood, 'officially the unofficial mascot of Robinhood'",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "ROBIN",
+  "chain": "RH",
+  "peak": 25000000,
+  "type": "frog / Robinhood lore (Muppet Robin Hood)",
+  "story": "Robin the Frog, Kermit's nephew in Muppet Robin Hood",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "ROBINPEPE",
+  "chain": "RH",
+  "peak": 0,
+  "type": "Pepe + Robinhood lore",
+  "story": "Pepe dressed as Robin Hood",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "O",
+  "chain": "RH",
+  "peak": 0,
+  "type": "AI news-jack (OpenAI 'o' leak) / stock-paired (OPENAI token)",
+  "story": "Jake Boggs screenshot of 'o, your always-on assistant' in ChatGPT Pro perks",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "GOOSE",
+  "chain": "RH",
+  "peak": 78000000,
+  "type": "political parody animal (presidential goose)",
+  "story": "goosepresident.xyz 'Make Waterfowl Great Again', Honkington D.C.",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "AnsemCat",
+  "chain": "RH",
+  "peak": 0,
+  "type": "KOL-name meme / Solana crossover (ANSEM bull + CASHCAT cat)",
+  "story": "ansemcat.xyz 'One Charge. Two Legends.' merging the bull (The Black Bull/ANSEM) and the cat",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "MEME",
+  "chain": "RH",
+  "peak": 150000000,
+  "type": "stock-paired meme (AMC) / corporate-feud news-jack",
+  "story": "AMC CEO Adam Aron vs Robinhood over tokenized AMC; Vlad replied 'What's the concern?'",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "HOOD",
+  "chain": "RH",
+  "peak": 0,
+  "type": "Robinhood lore (outlaw) / ticker squat on HOOD",
+  "story": "X bio: 'One hooded man robbed a carriage, dumped the bag on-chain...'",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "BUN",
+  "chain": "RH",
+  "peak": 0,
+  "type": "AI-agent / launch-infra mascot cat (Mosh.trade)",
+  "story": "first launch from Mosh.trade AI market-making system (intentional bundle locked in vaults)",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "astro",
+  "chain": "RH",
+  "peak": 0,
+  "type": "viral-tweet news-jack / space parody",
+  "story": "tweet 'SpaceX launches vs. kids painting astronauts' (quote of @rtwlz children's-drawings dataset), 654k views",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "SI",
+  "chain": "RH",
+  "peak": 0,
+  "type": "political/AI news-jack dog coin (Trump 'super intelligence')",
+  "story": "Trump UN General Assembly speech: AI to be called 'super intelligence (SI)'",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "SHRUB",
+  "chain": "RH",
+  "peak": 54900000,
+  "type": "Musk-orbit pet meme (Shivon Zilis hedgehog)",
+  "story": "Shivon Zilis X post of hedgehog 'Lil' Shrub in a shrub'",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "CPU",
+  "chain": "RH",
+  "peak": 3440000,
+  "type": "stock-paired cat (INTC) / chip pun",
+  "story": "old programmer-humor 'Cat Processing Unit' meme; paired with tokenized Intel",
+  "src": "metascanner"
+ },
+ {
+  "ticker": "PENGUIN",
+  "chain": "SOL",
+  "peak": 160000000,
+  "type": "news/political animal post",
+  "story": "White House posted a penguin image (67M views) Jan 2026; old $400K coin pumped 600% in 24h",
+  "src": "report"
+ },
+ {
+  "ticker": "DACITY",
+  "chain": "SOL",
+  "peak": 3200000,
+  "type": "object shown in GTA 6 trailer",
+  "story": "Item seen in GTA 6 trailer Oct 15 2026; coin existed 5 days before, +2900% within an hour",
+  "src": "report"
+ },
+ {
+  "ticker": "DCTY",
+  "chain": "SOL",
+  "peak": 12000000,
+  "type": "GTA 6 leak object (copy)",
+  "story": "Rival copy of Dacity pumped on leaked gameplay to $12M+",
+  "src": "report"
+ },
+ {
+  "ticker": "TROLL",
+  "chain": "SOL",
+  "peak": 117000000,
+  "type": "internet relic face",
+  "story": "Classic Troll face meme, ran to ~$117M May 2026",
+  "src": "report"
+ },
+ {
+  "ticker": "FIONA",
+  "chain": "RH",
+  "peak": 5500000,
+  "type": "viral zoo animal (news)",
+  "story": "Fiona the hippo news Nov 2026; many copies on SOL and RH",
+  "src": "report"
+ },
+ {
+  "ticker": "BINANCELIFE",
+  "chain": "BNB",
+  "peak": 524000000,
+  "type": "celebrity/founder post",
+  "story": "CZ and Yi He posted the phrase Oct 2025; $50M to $524M in 2 days",
+  "src": "report"
+ },
+ {
+  "ticker": "PINKY",
+  "chain": "SOL",
+  "peak": 198000,
+  "type": "viral tiny animal news",
+  "story": "Pinky the 2-foot buffalo viral news Nov 2026; 53 coins made, best ~$200K (small)",
+  "src": "report"
+ }
+]

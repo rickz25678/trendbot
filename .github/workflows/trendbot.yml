@@ -1,7 +1,7 @@
 name: trendbot
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes (GitHub often delays or skips these, so runs also chain themselves below)
+    - cron: '*/5 * * * *'   # backup only - GitHub often skips these; runs chain themselves below
   workflow_dispatch: {}
 permissions:
   contents: write
@@ -14,15 +14,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: note start time
-        run: echo "START=$(date +%s)" >> $GITHUB_ENV
+      - name: queue the next run (starts the moment this one finishes)
+        # To stop the bot: set repo variable STOP = 1
+        if: vars.STOP != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run trendbot.yml -R ${{ github.repository }}
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: node bot.mjs
-        timeout-minutes: 8
+        timeout-minutes: 9
         env:
+          LOOP_MS: '270000'   # keep checking every minute for ~4.5 min
+          TG_CHANNELS: ${{ vars.TG_CHANNELS || 'WatcherGuru' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -31,16 +37,7 @@ jobs:
         run: |
           git config user.name trendbot
           git config user.email trendbot@users.noreply.github.com
-          git add -f state
+          git add -f state library.json
           git diff --cached --quiet && exit 0
           git commit -m "update state"
           for i in 1 2 3; do git pull --rebase -X theirs && git push && exit 0; sleep 5; done
-      - name: start the next run about 5 minutes after this one began
-        # backup for the unreliable GitHub timer. To stop the bot: set repo variable STOP = 1
-        if: always() && vars.STOP != '1'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          wait=$(( 300 - ($(date +%s) - START) ))
-          if [ $wait -gt 0 ]; then sleep $wait; fi
-          gh workflow run trendbot.yml -R ${{ github.repository }}
