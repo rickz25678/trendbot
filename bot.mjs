@@ -671,7 +671,9 @@ async function raceWatch(state, now) {
       const mc = p.marketCap || p.fdv || 0;
       if (!p.coinCreated || p.coinCreated < idea.first - 10 * MIN) continue; // coin existed before the idea
       // ignore dead junk tokens (no liquidity, no volume) - they can still count later if they come alive
-      if ((p.liquidity?.usd || 0) < 2000 && (p.volume?.h24 || 0) < 2000) continue;
+      if ((p.liquidity?.usd || 0) < 5000 && (p.volume?.h24 || 0) < 10000) continue;
+      const topicWords = key(idea.topic).split(' ').filter(w => w.length >= 4);
+      if (symOf(p).length <= 4 && !topicWords.some(w => key(p.baseToken.name).includes(w))) continue; // e.g. $BUCK alone is too generic
       if (mc > (idea.bestMc || 0)) { idea.bestMc = mc; idea.bestUrl = p.url; idea.bestChain = CHAINS[p.chainId]; }
       if (idea.seenPairs.includes(p.baseToken.address)) continue;
       idea.seenPairs.push(p.baseToken.address);
@@ -815,13 +817,15 @@ async function tick(state, lib, n) {
 
   // chain context (every 10 min)
   if (due('chains', 15 * MIN) || !state.metas) {
+    const prevTop = state.chainTop || {};
     state.chainTop = {};
     for (const net of Object.keys(CHAINS)) {
       const seen = new Set();
       // memes only: drop stablecoins, wrapped/major tokens and repeat pools of the same coin
       state.chainTop[CHAINS[net]] = (await chainTrending(net))
-        .filter(x => !NOT_MEME.test(x.name) && !seen.has(x.name.toUpperCase()) && seen.add(x.name.toUpperCase()))
+        .filter(x => x.mc > 0 && !NOT_MEME.test(x.name) && !seen.has(x.name.toUpperCase()) && seen.add(x.name.toUpperCase()))
         .slice(0, 6);
+      if (!state.chainTop[CHAINS[net]].length && prevTop[CHAINS[net]]?.length) state.chainTop[CHAINS[net]] = prevTop[CHAINS[net]]; // site was slow: keep last list
     }
     state.dexMetas = (await dexMetas()).slice(0, 10);
     state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${chg(x)}`).join(', ')}`).join('\n') +
@@ -872,7 +876,7 @@ WORDS SPIKING IN NEW LAUNCHES ON LAUNCHPADS RIGHT NOW (launches/hour): ${state.p
       `🔗 <b>Crypto signal:</b> ${esc(signal)}\n\n<b>${esc(p.topic)}</b>\n${esc(p.why)}\n🧬 Like <b>$${esc(p.like)}</b> — ${esc(p.like_why)}\n\n`;
     if (coins.length) cap += `<b>Live coins already out:</b>\n${coins.slice(0, 3).map(coinLine).join('\n')}\n`;
     else cap += `<b>No live coin yet — you could be first.</b>\n`;
-    if (open.length) cap += `<b>Open tickers:</b> ${open.map(o => `$${esc(o.t)} (${o.chains.join(' ')})`).join(' · ')}\n`;
+    if (open.length) cap += `<b>Open tickers:</b> ${open.map(o => `$${esc(o.t)} (${o.chains.length === Object.keys(CHAINS).length ? 'all chains' : o.chains.join(' ')})`).join(' · ')}\n`;
     cap += `<b>Best chain:</b> ${esc(p.chain)} — ${esc(p.chain_why)}\n<b>Art:</b> ${esc(p.art)}\n`;
     cap += `\n${src} · first seen ${ago(now - firstSeen)} ago · in ${(tr.srcs || [p.cand.src]).length} source(s)`;
     const image = await findImage(p.topic, p.cand);
