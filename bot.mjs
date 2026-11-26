@@ -34,7 +34,14 @@ const LOUD_SCORE = 9;
 const LOOP_MS = +(process.env.LOOP_MS || 270000); // how long one job keeps looping
 const TICK_MS = 60000;                              // one check per minute
 // public Telegram channels to copy (read via t.me/s/<name>)
-const TG_CHANNELS = (process.env.TG_CHANNELS || 'WatcherGuru').split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
+const DEFAULT_CHANNELS = [
+  'WatcherGuru', 'TreeNewsFeed', 'BWEnews', 'wublockchainenglish',          // fast crypto news
+  'binance_announcements', 'hyperliquid_announcements',                      // listings
+  'LookOnChainChannel',                                                      // on-chain / whales
+  'disclosetv', 'insiderpaper',                                              // viral / breaking world news
+  'memecoins', 'pumpfun',                                                    // meme coin scene
+].join(',');
+const TG_CHANNELS = (process.env.TG_CHANNELS || DEFAULT_CHANNELS).split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const FORCE = process.argv.includes('--force');
 const ONCE = process.argv.includes('--once') || FORCE;
@@ -53,7 +60,8 @@ async function get(url, asJson = false, headers = {}) {
 const decode = s => (s || '')
   .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
   .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&apos;|&#39;|&#x27;/g, "'").replace(/&nbsp;/g, ' ').trim();
+  .replace(/&quot;/g, '"').replace(/&apos;|&#39;|&#x27;/g, "'").replace(/&nbsp;/g, ' ')
+  .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n)).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).trim();
 const tag = (xml, t) => { const m = xml.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`)); return m ? decode(m[1]) : ''; };
 const items = xml => (xml || '').split(/<item[\s>]/).slice(1);
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -96,6 +104,11 @@ async function bingNews(q) {
     link: tag(it, 'link'), image: bingImg(tag(it, 'News:Image')),
     started: Date.parse(tag(it, 'pubDate')) || 0, src: 'News',
   }));
+}
+// Google News search limited to the last few hours (fresher than Bing)
+async function googleNews(q, window = '2h') {
+  const xml = await get(`https://news.google.com/rss/search?q=${encodeURIComponent(q + ' when:' + window)}&hl=en-US&gl=US&ceid=US:en`);
+  return items(xml).slice(0, 15).map(it => ({ title: tag(it, 'title'), link: tag(it, 'link'), started: Date.parse(tag(it, 'pubDate')) || 0, src: 'Google News' }));
 }
 async function knowYourMeme() {
   const xml = await get('https://knowyourmeme.com/newsfeed.rss');
@@ -171,6 +184,27 @@ async function chainTrending(net, duration = '24h') {
   return (j?.data || []).map(p => poolInfo(p, net));
 }
 const CRYPTO_FEEDS = ['https://decrypt.co/feed', 'https://cointelegraph.com/rss', 'https://www.coindesk.com/arc/outboundfeeds/rss', 'https://www.theblock.co/rss.xml'];
+// Tree of Alpha: fastest free crypto news, includes posts from key X accounts
+async function treeOfAlpha() {
+  const j = await get('https://news.treeofalpha.com/api/news?limit=40', true);
+  return (Array.isArray(j) ? j : []).map(n => ({ title: n.title, link: n.url || n.link, started: n.time || 0, image: n.image || '', src: `Tree of Alpha (${n.source || 'news'})` })).filter(n => n.title);
+}
+// exchange listing announcements (Upbit, Bybit, OKX)
+async function listings() {
+  const out = [];
+  const up = await get('https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=15&category=trade', true);
+  for (const n of up?.data?.notices || []) out.push({ title: `Upbit: ${n.title}`, link: `https://upbit.com/service_center/notice?id=${n.id}`, started: Date.parse(n.listed_at) || 0, src: 'Upbit' });
+  const by = await get('https://api.bybit.com/v5/announcements/index?locale=en-US&limit=15&type=new_crypto', true);
+  for (const n of by?.result?.list || []) out.push({ title: `Bybit: ${n.title}`, link: n.url, started: n.dateTimestamp || n.publishTime || 0, src: 'Bybit' });
+  const ok = await get('https://www.okx.com/api/v5/support/announcements?annType=announcements-new-listings', true);
+  for (const g of ok?.data || []) for (const n of g.details || []) out.push({ title: `OKX: ${n.title}`, link: n.url, started: +n.pTime || 0, src: 'OKX' });
+  return out;
+}
+// DexScreener's own trending meme categories (real numbers, all chains)
+async function dexMetas() {
+  const j = await get('https://api.dexscreener.com/metas/trending/v1', true);
+  return (Array.isArray(j) ? j : []).map(m => ({ name: m.name, mc: m.marketCap, ch1h: m.marketCapChange?.h1, ch24: m.marketCapChange?.h24, n: m.tokenCount }));
+}
 async function cryptoRss() {
   return (await Promise.all(CRYPTO_FEEDS.map(u => get(u)))).flatMap(items)
     .map(it => ({ title: tag(it, 'title'), link: tag(it, 'link'), started: Date.parse(tag(it, 'pubDate')) || 0, src: 'Crypto news' }));
@@ -353,6 +387,24 @@ function coinLine(p) {
 }
 
 // SOL safety via RugCheck (free)
+// Base / BNB / Ethereum safety via GoPlus (free)
+const GOPLUS_ID = { base: 8453, bsc: 56, ethereum: 1 };
+async function goplus(net, addr) {
+  const j = await get(`https://api.gopluslabs.io/api/v1/token_security/${GOPLUS_ID[net]}?contract_addresses=${addr}`, true);
+  const r = j?.result?.[addr.toLowerCase()];
+  if (!r) return '';
+  const bad = [], warn = [];
+  if (r.is_honeypot === '1') bad.push('honeypot (cannot sell)');
+  if (r.cannot_sell_all === '1') bad.push('cannot sell all');
+  if (+r.sell_tax > 0.1) bad.push(`sell tax ${Math.round(r.sell_tax * 100)}%`);
+  if (r.is_mintable === '1') warn.push('mintable');
+  if (r.owner_change_balance === '1') bad.push('owner can change balances');
+  if (r.hidden_owner === '1') warn.push('hidden owner');
+  if (r.is_open_source === '0') warn.push('code not verified');
+  const top = (r.holders || []).slice(0, 10).reduce((s, h) => s + (+h.percent || 0), 0);
+  if (top > 0.5) warn.push(`top 10 hold ${Math.round(top * 100)}%`);
+  return `${bad.length ? '🔴' : warn.length ? '🟡' : '🟢'} GoPlus${bad.length || warn.length ? '' : ' clean'}${bad.length ? ' · DANGER: ' + bad.join(', ') : ''}${warn.length ? ' · warn: ' + warn.join(', ') : ''}`;
+}
 async function rugcheck(mint) {
   const j = await get(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, true);
   if (!j) return '';
@@ -581,12 +633,14 @@ async function tick(state, lib, n) {
 
   // --- sources (fast ones every tick, slow ones less often) ---
   const due = (k, ms) => FORCE || now - (state.due[k] || 0) >= ms ? (state.due[k] = now, true) : false;
-  const newsQ = FORCE ? NEWS_QUERIES : [NEWS_SLOT(state.newsSlot = (state.newsSlot || 0) + 1)];
+  // 3 of the news searches per minute (all 9 every 3 minutes), Google News limited to the last 2 hours
+  const slot = state.newsSlot = ((state.newsSlot || 0) + 1) % 3;
+  const newsQ = FORCE ? NEWS_QUERIES : NEWS_QUERIES.filter((_, i) => i % 3 === slot);
   const [viralLists, tgLists] = await Promise.all([
     Promise.all([
-      due('x', 10 * MIN) ? Promise.all([xTrends('united-states', 'US'), xTrends('united-kingdom', 'UK')]).then(a => a.flat()) : [],
+      due('x', 5 * MIN) ? Promise.all([xTrends('united-states', 'US'), xTrends('united-kingdom', 'UK')]).then(a => a.flat()) : [],
       googleTrends('US'), googleTrends('GB'), knowYourMeme(), bluesky(),
-      (async () => { const o = []; for (const q of newsQ) { o.push(...await bingNews(q)); await sleep(500); } return o.filter(x => !x.started || now - x.started < 2 * DAY); })(),
+      (async () => { const o = []; for (const q of newsQ) { o.push(...await googleNews(q)); await sleep(400); } return o.filter(x => !x.started || now - x.started < 6 * HOUR); })(),
       due('wiki', HOUR) ? wikipedia() : [],
     ]),
     Promise.all(TG_CHANNELS.map(c => tgChannel(c, state))),
@@ -619,7 +673,9 @@ async function tick(state, lib, n) {
         .filter(x => !NOT_MEME.test(x.name) && !seen.has(x.name.toUpperCase()) && seen.add(x.name.toUpperCase()))
         .slice(0, 6);
     }
-    state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${chg(x)}`).join(', ')}`).join('\n');
+    state.dexMetas = (await dexMetas()).slice(0, 10);
+    state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${chg(x)}`).join(', ')}`).join('\n') +
+      (state.dexMetas.length ? `\nMETAS (DexScreener meme categories, all chains): ${state.dexMetas.map(m => `${m.name} ${money(m.mc)} 1h ${pct(m.ch1h)} 24h ${pct(m.ch24)}`).join('; ')}` : '');
   }
 
   // --- ideas ---
@@ -671,8 +727,9 @@ async function tick(state, lib, n) {
 
   // --- 📰 crypto news as it comes out (RSS every 3 min + Telegram channel posts every tick) ---
   if (!failed) {
-    const rss = due('rss', 3 * MIN) ? await cryptoRss() : [];
-    const newsNew = [...rss.filter(n => n.started && now - n.started < 2 * HOUR), ...tgPosts].filter(n => !state.news[key(n.title)]);
+    const slow = due('rss', 3 * MIN);
+    const [rss, toa, lst] = await Promise.all([slow ? cryptoRss() : [], treeOfAlpha(), slow ? listings() : []]);
+    const newsNew = [...[...rss, ...toa, ...lst].filter(n => n.started && now - n.started < 2 * HOUR), ...tgPosts].filter(n => !state.news[key(n.title)]);
     const kept = await newsFilter(newsNew, lib);
     if (kept !== null) {
       for (const n of kept) {
@@ -701,7 +758,7 @@ async function tick(state, lib, n) {
       for (const m of cand) state.movers[m.token] ||= now;
       for (const m of kept) {
         const id = idOf('mover ' + m.token);
-        const safety = m.net === 'solana' ? await rugcheck(m.token) : '';
+        const safety = m.net === 'solana' ? await rugcheck(m.token) : GOPLUS_ID[m.net] ? await goplus(m.net, m.token) : '';
         const msg = head('🪙 LIVE COIN MOVING', `${CHAIN_NAME[m.chain]} · ${m.score}/10`) +
           `<b>$${esc(m.name)}</b> · ${ago(now - m.created)} old\n${esc(m.meme)}\n🧬 Like <b>$${esc(m.like)}</b>\n` +
           `mc ${money(m.mc)} · liq ${money(m.liq)} · 1h vol ${money(m.vol1h)} · 1h ${pct(m.ch1h)}\n1h: ${m.buys1h} buys / ${m.sells1h} sells\n` +
@@ -727,6 +784,8 @@ async function tick(state, lib, n) {
       Object.entries(top).map(([n, l]) => `<b>${CHAIN_NAME[n] || n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${chg(x)}`).join(', ') || 'no data')).join('\n');
     const lines = (Array.isArray(themes) ? themes : themes?.lines || []).map(l => typeof l === 'string' ? l : Object.values(l || {}).join(': ')).filter(l => l && l.trim());
     if (lines.length) d += `\n\n<b>🧭 Metas forming:</b>\n${lines.map(l => '• ' + esc(l)).join('\n')}`;
+    const hot = (state.dexMetas || []).filter(m => m.ch1h != null).sort((a, b) => (b.ch1h || 0) - (a.ch1h || 0)).slice(0, 6);
+    if (hot.length) d += `\n\n<b>🔥 Hottest meme categories (DexScreener):</b>\n${hot.map(m => `• ${esc(m.name)} — ${money(m.mc)} · 1h ${pct(m.ch1h)} · 24h ${pct(m.ch24)} · ${m.n} coins`).join('\n')}`;
     if (!await sendText(d)) failed = true;
   }
 
@@ -775,5 +834,5 @@ async function main() {
 }
 
 // sources are exported so tools/check_sources.mjs can test them; the bot only runs when started directly
-export { get, xTrends, googleTrends, bingNews, knowYourMeme, bluesky, wikipedia, tgChannel, chainTrending, cryptoRss, dexSearch, rugcheck, CHAINS, GECKO, TG_CHANNELS, NEWS_QUERIES };
+export { get, xTrends, googleTrends, bingNews, googleNews, knowYourMeme, bluesky, wikipedia, tgChannel, chainTrending, cryptoRss, treeOfAlpha, listings, dexMetas, goplus, dexSearch, rugcheck, CHAINS, GECKO, TG_CHANNELS, NEWS_QUERIES };
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch(e => { console.error(e); process.exit(1); });
