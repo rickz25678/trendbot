@@ -24,6 +24,8 @@ const GECKO = { solana: 'solana', robinhood: 'robinhood', elysium: 'elysium', ba
 const CHAIN_NAME = { SOL: 'Solana', RH: 'Robinhood', ELY: 'Elysium', BASE: 'Base', BNB: 'BNB', ETH: 'Ethereum', HL: 'Hyperliquid' };
 // minimum market cap / 1h volume for a "live mover" on each chain
 const MOVER_MIN = { solana: [50000, 30000], ethereum: [100000, 50000], base: [50000, 25000], bsc: [50000, 25000], hyperevm: [30000, 10000], robinhood: [20000, 10000], elysium: [20000, 10000] };
+// tokens that are not meme coins (stablecoins, wrapped/majors, big DeFi/infra) - kept out of chain lists
+const NOT_MEME = /^(W|U|K|ST|C)?(USD[A-Z0-9]*|USDT|USDC|DAI|ETH|BTC|SOL|HYPE|BNB|WBNB|WETH|CBBTC|ONDO|LINK|UNI|AERO|VVV|VIRTUAL|JUP|RAY|PUMP|ENA|PIEVERSE|EURC|PYUSD|FDUSD|USD1|CRVUSD|CRV|KNTQ|MONTRA|PONS|NEST)$/i;
 // every message starts with a clear label so you know what it is at a glance
 const head = (label, sub = '') => `<b>${label}</b>${sub ? ' · ' + sub : ''}\n━━━━━━━━━━━━━━\n`;
 const MIN = 60000, HOUR = 60 * MIN, DAY = 24 * HOUR;
@@ -174,8 +176,12 @@ async function cryptoRss() {
 
 // ---------- winners library ----------
 const loadLibrary = () => { try { return JSON.parse(fs.readFileSync(LIB_FILE, 'utf8')); } catch { return []; } };
-const libraryText = lib => lib.sort((a, b) => (b.peak || 0) - (a.peak || 0))
-  .map(x => `${x.ticker} (${x.chain}${x.peak ? ', peak ' + money(x.peak) : ''}): ${x.type} — ${x.story}`).join('\n');
+const libraryText = lib => [...lib].sort((a, b) => (b.peak || 0) - (a.peak || 0))
+  .map(x => `${x.ticker} (${x.chain}${x.peak ? ', peak ' + money(x.peak) : ''}): ${x.type}${x.meme ? ' — ' + x.meme : ''}${x.origin || x.story ? ' | origin: ' + (x.origin || x.story) : ''}${x.why ? ' | why it won: ' + x.why : ''}`).join('\n');
+// lessons from coins that flopped and copycat fights
+const LESSONS = (() => { try { return JSON.parse(fs.readFileSync(new URL('./lessons.json', import.meta.url), 'utf8')); } catch { return { rules: [], cases: [] }; } })();
+const lessonsText = () => (LESSONS.rules.length ? `RULES LEARNED FROM FLOPS AND COPYCAT FIGHTS:\n${LESSONS.rules.map(r => '- ' + r).join('\n')}\n` : '') +
+  (LESSONS.cases.length ? `FLOP / COPY CASES:\n${LESSONS.cases.map(c => `- ${c.name} (${c.kind}): ${c.lesson}`).join('\n')}` : '');
 
 async function refreshLibrary(lib) {
   const have = new Set(lib.map(x => x.ticker.toUpperCase()));
@@ -256,6 +262,8 @@ async function aiFilter(cands, metas, state, lib) {
 
 LIBRARY OF PAST WINNING MEME COINS (learn the patterns: what the meme was and where the story came from):
 ${libraryText(lib)}
+
+${lessonsText()}
 
 The patterns that win: viral animal with a name (MOODENG, PNUT, WIF, FIONA, PENGUIN); internet relic/meme character (TROLL, CHILLGUY, GIGA, POPCAT); object or moment from a huge event (GTA 6 trailer -> DACITY); celebrity/founder/brand/government post (BINANCELIFE, PENGUIN, SHRUB, SI); AI/tech news-jack (O, GOAT, FARTCOIN); self-aware joke (USELESS, FARTCOIN); chain lore (CASHCAT, ROBIN, Hypurr cats on Elysium); stock/brand corporate drama (MEME vs AMC).
 The patterns that lose: sports results, plain political news, deaths/tragedies/crime/disasters, holidays, regional celebrity gossip, TV drama plots, generic news with no character, things already old. Never pick tragedies, real private people or children.
@@ -553,8 +561,8 @@ Return JSON: {"characters": [{"name": "...", "examples": ["TICKER", ...], "note"
   const sig = [...chars.map(c => key(c.name)), '|', ...art.map(a => key(a.style))].join(',');
   if (sig === state.lastArt) return null; // nothing changed since last report
   const msg = new String(head('🎨 TRENDING CHARACTERS & ART') +
-    `<b>Characters:</b>\n${chars.map(c => `• <b>${esc(c.name)}</b> — ${(c.examples || []).map(t => '$' + esc(t)).join(' ')}${c.note ? ' · ' + esc(c.note) : ''}`).join('\n') || '• nothing clear'}\n\n` +
-    `<b>Art styles:</b>\n${art.map(a => `• <b>${esc(a.style)}</b> — ${(a.examples || []).map(t => '$' + esc(t)).join(' ')}${a.note ? ' · ' + esc(a.note) : ''}`).join('\n') || '• nothing clear'}` +
+    `<b>Characters:</b>\n${chars.map(c => `• <b>${esc(c.name)}</b> — ${(c.examples || []).map(t => '$' + esc(String(t).replace(/^\$+/, ''))).join(' ')}${c.note ? ' · ' + esc(c.note) : ''}`).join('\n') || '• nothing clear'}\n\n` +
+    `<b>Art styles:</b>\n${art.map(a => `• <b>${esc(a.style)}</b> — ${(a.examples || []).map(t => '$' + esc(String(t).replace(/^\$+/, ''))).join(' ')}${a.note ? ' · ' + esc(a.note) : ''}`).join('\n') || '• nothing clear'}` +
     (j.tip ? `\n\n💡 <b>Make next:</b> ${esc(j.tip)}` : ''));
   msg.sig = sig;
   return msg;
@@ -602,7 +610,13 @@ async function tick(state, lib, n) {
   // chain context (every 10 min)
   if (due('chains', 10 * MIN) || !state.metas) {
     state.chainTop = {};
-    for (const net of Object.keys(CHAINS)) state.chainTop[CHAINS[net]] = (await chainTrending(net)).slice(0, 6);
+    for (const net of Object.keys(CHAINS)) {
+      const seen = new Set();
+      // memes only: drop stablecoins, wrapped/major tokens and repeat pools of the same coin
+      state.chainTop[CHAINS[net]] = (await chainTrending(net))
+        .filter(x => !NOT_MEME.test(x.name) && !seen.has(x.name.toUpperCase()) && seen.add(x.name.toUpperCase()))
+        .slice(0, 6);
+    }
     state.metas = Object.entries(state.chainTop).map(([n, l]) => `${n}: ${l.map(x => `${x.name} ${money(x.mc)} ${pct(x.ch24)}`).join(', ')}`).join('\n');
   }
 
@@ -709,7 +723,8 @@ async function tick(state, lib, n) {
     const themes = await geminiJSON(`Trending meme coins right now per chain:\n${state.metas}\nIn max 3 short lines, what themes/metas are forming on each chain (e.g. "hippo coins", "slash tickers", "stock-paired memes")? Only say what is visible in the list. Return JSON: {"lines": ["..."]}`);
     let d = head('📈 CHAIN UPDATE', `${newInTop.length} new in the top lists`) +
       Object.entries(top).map(([n, l]) => `<b>${CHAIN_NAME[n] || n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${pct(x.ch24)}`).join(', ') || 'no data')).join('\n');
-    if (themes?.lines?.length) d += `\n\n<b>🧭 Metas forming:</b>\n${themes.lines.map(l => '• ' + esc(l)).join('\n')}`;
+    const lines = (Array.isArray(themes) ? themes : themes?.lines || []).map(l => typeof l === 'string' ? l : Object.values(l || {}).join(': ')).filter(l => l && l.trim());
+    if (lines.length) d += `\n\n<b>🧭 Metas forming:</b>\n${lines.map(l => '• ' + esc(l)).join('\n')}`;
     if (!await sendText(d)) failed = true;
   }
 

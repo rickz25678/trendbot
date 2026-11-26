@@ -1,0 +1,211 @@
+{
+ "rules": [
+  "Celebrity/politician-launched coins with presale, gifted or team-held supply dump within hours; the first candle is the top.",
+  "If one wallet, cluster or multisig holds >50% of supply (check Bubblemaps), assume it is the exit for insiders.",
+  "Fresh wallets funded on launch day among top holders = sniper/insider setup; avoid.",
+  "Serial launch operators (Hayden Davis/Kelsier, Sahil Arora) repeat the same rug playbook: check who is behind the launch.",
+  "A famous name alone is not a meme; coins need a funny/cute shareable character or moment.",
+  "When the real person or meme source posts one contract, only that contract matters; all copies die.",
+  "Among copies, the winner is usually the earliest coin with the exact name and exact ticker that graduates the bonding curve fast.",
+  "First is not enough: fairer supply, active CTO community and more liquidity beat the first-launched version (NEIRO ETH beat SOL).",
+  "Tier-1 CEX listing (Binance/Coinbase) picks the final winner among copies; the oldest exact-name, highest-volume coin gets listed.",
+  "When an existing coin already has the exact name, a big viral post sends flow to it, not to new launches (PENGUIN, KEKIUS, LABUBU).",
+  "A specific named object/character inside a mega-brand beats generic brand coins (Dacity Coin vs generic GTA 6 coins).",
+  "Being positioned before the reveal (leaks, rumors) wins; launching after the news means fighting dozens of copies.",
+  "Variants ('wif hat', 'baby', 'girl', 'not a') stay small; split tickers cap the upside of even huge memes.",
+  "Cute, funny, alive viral animals run big (MOODENG, PNUT); sad news, deaths and serious events give short, small pumps.",
+  "Coins tied to a celebrity's temporary choice (X name, pfp) crash the moment they change it.",
+  "'Rival' or rumor coins ('X will launch a coin', DADDY vs MOTHER) are borrowed hype and die with the trend.",
+  "Viral-animal and trend coins peak within ~1-3 weeks; treat them as trades, not holds.",
+  "Dev/influencer selling, rugging or stunts kill trust instantly; dev behaviour after launch decides survival.",
+  "Real charity donations and launchpad/official-account reposts help pick 'the one' among copies but don't create the run alone."
+ ],
+ "cases": [
+  {
+   "name": "Hawk Tuah girl coin",
+   "kind": "flop",
+   "meme": "Haliey Welch, the viral 'Hawk Tuah' street-interview girl, launched her own token.",
+   "lesson": "Celebrity launch + presale/gifted supply to insiders = instant dump; never chase the first candle."
+  },
+  {
+   "name": "LIBRA (Milei)",
+   "kind": "flop",
+   "meme": "Argentina's president Javier Milei posted a token supposedly to fund Argentine businesses.",
+   "lesson": "Politician/official-looking coins run by launch 'facilitators' with most supply unlocked are exit liquidity traps."
+  },
+  {
+   "name": "MELANIA (official)",
+   "kind": "flop",
+   "meme": "Official Melania Trump coin launched one day after TRUMP, before the inauguration.",
+   "lesson": "The second coin of the same celebrity/family is a dilution, not a new winner; team-controlled supply bleeds out."
+  },
+  {
+   "name": "Caitlyn Jenner coin",
+   "kind": "flop",
+   "meme": "Caitlyn Jenner launched her own celebrity token during the mid-2024 celeb-coin wave.",
+   "lesson": "A famous name is not a meme; promoter-run celebrity coins have no organic buyers after launch day."
+  },
+  {
+   "name": "Jason Derulo coin",
+   "kind": "flop",
+   "meme": "Singer Jason Derulo promoted his own token.",
+   "lesson": "If one promoter cluster holds a big chunk of supply, the coin is their exit, not yours."
+  },
+  {
+   "name": "Iggy Azalea coin",
+   "kind": "flop",
+   "meme": "Rapper Iggy Azalea's 'mother' token, the most successful of the 2024 celeb coins.",
+   "lesson": "Even the best celebrity coin fades once the celeb stops posting; the peak is in the first weeks."
+  },
+  {
+   "name": "Andrew Tate coin",
+   "kind": "flop",
+   "meme": "Andrew Tate promoted 'DADDY' as a rival to Iggy's MOTHER.",
+   "lesson": "A 'rival' coin made to flip another celeb coin has borrowed hype and dies with the trend."
+  },
+  {
+   "name": "Kanye West coin",
+   "kind": "flop",
+   "meme": "Kanye West (Ye) launched YZY as an 'official' token tied to his brand.",
+   "lesson": "If one wallet/multisig holds most supply and snipers own the first block, the celebrity is the marketing for insiders."
+  },
+  {
+   "name": "Central African Republic coin",
+   "kind": "flop",
+   "meme": "The president of the Central African Republic announced a national meme coin.",
+   "lesson": "'Nation/official' coins with <10% public float are not memes, they are insider distributions."
+  },
+  {
+   "name": "Wolf of Wall Street coin",
+   "kind": "flop",
+   "meme": "Token riding rumors that Jordan Belfort (the real Wolf of Wall Street) would launch a coin.",
+   "lesson": "Coins based on a rumor that a famous person 'will launch' are usually set up by insiders to sell the rumor."
+  },
+  {
+   "name": "Dave Portnoy coins",
+   "kind": "flop",
+   "meme": "Barstool's Dave Portnoy promoted a 'Stool Prisondente' token and launched/sold GREED.",
+   "lesson": "Influencer-promoted coins live and die by that one wallet; if the influencer sells once, it is over."
+  },
+  {
+   "name": "Hunter Biden LAPTOP coin",
+   "kind": "flop",
+   "meme": "Hunter Biden launched a coin named after his infamous laptop.",
+   "lesson": "Thin-liquidity launches by famous people get sniped and dumped in the first hour; top holders that are fresh wallets = red flag."
+  },
+  {
+   "name": "Gen Z Quant kid rug",
+   "kind": "flop",
+   "meme": "A teen livestreamed rugging his own Pump.fun coin and flipping off chat.",
+   "lesson": "Revenge/story pumps are one-day events; ride early or skip, never hold."
+  },
+  {
+   "name": "Pope coins (Francis death / Leo XIV election)",
+   "kind": "flop",
+   "meme": "Coins launched on Pope Francis's death and Pope Leo XIV's election.",
+   "lesson": "Big serious news (deaths, elections, religion) gives one-day pumps; it is not a lasting meme character."
+  },
+  {
+   "name": "Musk 'Harry Bolz' name coins",
+   "kind": "flop",
+   "meme": "Coins named after Elon Musk's temporary X display name 'Harry Bolz'.",
+   "lesson": "Coins that depend on a celebrity keeping a profile name/pfp die the moment they change it."
+  },
+  {
+   "name": "GTA 6 coin flood (Jan 2025)",
+   "kind": "flop",
+   "meme": "Generic GTA 6 hype coins before any official trailer content.",
+   "lesson": "Generic 'big brand' coins with no specific moment or object split into dozens and all die."
+  },
+  {
+   "name": "TRUMP vs copycats",
+   "kind": "winner vs copies",
+   "meme": "Donald Trump launched an official coin days before his inauguration.",
+   "lesson": "When the real person posts a contract, only that contract matters; every copy is a scam within minutes."
+  },
+  {
+   "name": "Moo Deng vs copies",
+   "kind": "winner vs copies",
+   "meme": "Baby pygmy hippo at Thailand's Khao Kheow zoo going viral.",
+   "lesson": "For viral animals: the earliest coin with the exact animal name and ticker that graduates fast becomes 'the one'."
+  },
+  {
+   "name": "Peanut the Squirrel vs copies",
+   "kind": "winner vs copies",
+   "meme": "Pet squirrel Peanut seized and euthanized by NY officials; became a US election talking point.",
+   "lesson": "A CEX listing (Binance/Coinbase) picks the winner among copies; the coin most likely to list is the oldest exact-name one with most volume."
+  },
+  {
+   "name": "Chill Guy vs copies",
+   "kind": "winner vs copies",
+   "meme": "'Just a chill guy' cartoon dog trend on TikTok.",
+   "lesson": "Exact trend name + ticker, launched as the trend rises, beats every variant ('wif hat', 'girl', 'not a')."
+  },
+  {
+   "name": "CZ's dog Broccoli vs copies",
+   "kind": "winner vs copies",
+   "meme": "CZ revealed his dog's name is Broccoli.",
+   "lesson": "For crypto-figure memes, the coin on that figure's home chain with the exact name wins; front-run guesses die."
+  },
+  {
+   "name": "Neiro (Kabosu's successor) ETH vs SOL",
+   "kind": "winner vs copies",
+   "meme": "Neiro, the new dog adopted by the Doge (Kabosu) owner.",
+   "lesson": "First isn't enough: the version with the fairest supply and a strong CTO community attracts the CEX listing and wins."
+  },
+  {
+   "name": "GOAT (Truth Terminal) vs fakes",
+   "kind": "winner vs copies",
+   "meme": "AI bot Truth Terminal preaching the 'Goatse gospel'; anon made a coin and the AI endorsed it.",
+   "lesson": "If the meme's source account endorses one contract, that one wins; copies lack the voice that keeps the story alive."
+  },
+  {
+   "name": "Kekius Maximus vs copies",
+   "kind": "winner vs copies",
+   "meme": "Elon Musk changed his X name to 'Kekius Maximus' with a Pepe-gladiator pfp.",
+   "lesson": "Pre-existing exact-name coin wins the copy war, but if the meme depends on a celeb's temporary choice, sell into the pump."
+  },
+  {
+   "name": "Labubu vs name clones",
+   "kind": "winner vs copies",
+   "meme": "Pop Mart's Labubu toy craze.",
+   "lesson": "When an old brand/character re-trends, the oldest exact-name coin with history wins the revival."
+  },
+  {
+   "name": "Tung Tung Tung Sahur (Italian brainrot) coins",
+   "kind": "winner vs copies",
+   "meme": "Italian brainrot AI character Tung Tung Tung Sahur.",
+   "lesson": "A huge kids/TikTok meme does not guarantee a big coin; split tickers cap the upside."
+  },
+  {
+   "name": "Nietzschean Penguin + White House post",
+   "kind": "winner vs copies",
+   "meme": "White House posted Trump walking hand in hand with a penguin; links to the 'nihilist penguin' meme.",
+   "lesson": "When a big account posts a meme, buyers pile into the existing coin with that exact name, not new launches."
+  },
+  {
+   "name": "Punch the baby monkey",
+   "kind": "winner vs copies",
+   "meme": "Rejected baby macaque at Ichikawa City Zoo, Japan, who bonded with a plush orangutan.",
+   "lesson": "Cute-animal coins peak within ~2-3 weeks of the story; plan exits, don't treat as a long hold."
+  },
+  {
+   "name": "Dacity Coin (GTA 6 trailer) vs other Dacity tokens",
+   "kind": "winner vs copies",
+   "meme": "Fictional 'Dacity Coin' crypto shown for ~2 seconds in the GTA 6 launch trailer (AudaCity brand).",
+   "lesson": "A specific named object inside a mega-brand beats generic brand coins; being positioned before the reveal wins."
+  },
+  {
+   "name": "Fiona the hippo coins (Nov 2026)",
+   "kind": "winner vs copies",
+   "meme": "Fiona, Cincinnati Zoo's famous hippo, died Nov 19, 2026 after swallowing a hat.",
+   "lesson": "Death/sad-news animal coins stay small; donations help pick 'the one' but don't create a Moo Deng-size run."
+  },
+  {
+   "name": "Jimothy the Raccoon",
+   "kind": "winner vs copies",
+   "meme": "Real short-spined raccoon filmed near a Seattle Goodwill.",
+   "lesson": "Launchpad/official-account reposts concentrate flow into one coin among copies."
+  }
+ ]
+}
