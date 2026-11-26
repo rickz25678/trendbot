@@ -38,7 +38,6 @@ const DEFAULT_CHANNELS = [
   'WatcherGuru', 'TreeNewsFeed', 'BWEnews', 'wublockchainenglish',          // fast crypto news
   'binance_announcements', 'hyperliquid_announcements',                      // listings
   'LookOnChainChannel',                                                      // on-chain / whales
-  'disclosetv', 'insiderpaper',                                              // viral / breaking world news
   'memecoins', 'pumpfun',                                                    // meme coin scene
 ].join(',');
 const TG_CHANNELS = (process.env.TG_CHANNELS || DEFAULT_CHANNELS).split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
@@ -154,7 +153,7 @@ async function tgChannel(name, state) {
 let lastGecko = 0;
 async function gecko(path) { // GeckoTerminal free API allows ~30 calls/min
   const wait = 2200 - (Date.now() - lastGecko); if (wait > 0) await sleep(wait);
-  for (let a = 0; a < 3; a++) {
+  for (let a = 0; a < 2; a++) {
     lastGecko = Date.now();
     try {
       const r = await fetch(`https://api.geckoterminal.com/api/v2/${path}`, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
@@ -162,7 +161,7 @@ async function gecko(path) { // GeckoTerminal free API allows ~30 calls/min
       console.error('gecko', r.status, path);
       if (r.status !== 429) return null;
     } catch (e) { console.error('gecko', e.message); }
-    await sleep(15000 * (a + 1));
+    if (a === 0) await sleep(8000);
   }
   return null;
 }
@@ -201,6 +200,50 @@ async function listings() {
   return out;
 }
 // DexScreener's own trending meme categories (real numbers, all chains)
+// brand-new coin pages on DexScreener: the creator's own description of the meme (crypto-native idea source)
+async function dexProfiles() {
+  const j = await get('https://api.dexscreener.com/token-profiles/latest/v1', true);
+  return (Array.isArray(j) ? j : []).filter(p => CHAINS[p.chainId] && p.description)
+    .map(p => ({ title: `New ${CHAINS[p.chainId]} coin: ${p.description.split('\n')[0].slice(0, 160)}`, detail: p.description.slice(0, 300), link: p.url, image: p.icon || '', src: 'DexScreener new coin' }));
+}
+// ---------- 🔥 launchpad radar: every new coin on the big launchpads ----------
+async function launchpadFeed(slowDue) {
+  const out = [];
+  // Solana: pump.fun, LetsBonk, Believe... (Jupiter's list of the newest Solana tokens)
+  const jup = await get('https://lite-api.jup.ag/tokens/v2/recent?limit=100', true);
+  for (const x of Array.isArray(jup) ? jup : []) out.push({ k: 'SOL:' + x.id, name: x.name, symbol: x.symbol, pad: x.launchpad || 'Solana other', chain: 'SOL', t: Date.parse(x.createdAt || x.firstPool?.createdAt) || Date.now() });
+  if (slowDue) {
+    // BNB: four.meme newest
+    try {
+      const r = await fetch('https://four.meme/meme-api/v1/public/token/search', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA }, body: JSON.stringify({ type: 'NEW', listType: 'NOR', pageIndex: 1, pageSize: 50 }), signal: AbortSignal.timeout(20000) });
+      const j = await r.json();
+      for (const x of j?.data || []) out.push({ k: 'BNB:' + x.tokenAddress, name: x.name, symbol: x.shortName || x.symbol, pad: 'four.meme', chain: 'BNB', t: +x.createDate || Date.now() });
+    } catch (e) { console.error('four.meme', e.message); }
+    // Base: Clanker + Zora newest
+    const cl = await get('https://clanker.world/api/tokens?sort=desc&limit=50', true);
+    for (const x of cl?.data || []) out.push({ k: 'BASE:' + x.contract_address, name: x.name, symbol: x.symbol, pad: 'Clanker', chain: 'BASE', t: Date.parse(x.created_at) || Date.now() });
+    const zo = await get('https://api-sdk.zora.engineering/explore?listType=NEW&count=50', true);
+    for (const e of zo?.exploreList?.edges || []) { const x = e.node || {}; if (x.address) out.push({ k: 'BASE:' + x.address, name: x.name, symbol: x.symbol, pad: 'Zora', chain: 'BASE', t: Date.parse(x.createdAt) || Date.now() }); }
+    // Robinhood (Pons), Elysium (Montra), Hyperliquid: newest pools
+    for (const net of ['robinhood', 'elysium', 'hyperevm']) {
+      const j = await gecko(`networks/${GECKO[net]}/new_pools`);
+      for (const p of (j?.data || []).map(x => poolInfo(x, net))) out.push({ k: `${CHAINS[net]}:${p.token}`, name: p.name, symbol: p.name, pad: { robinhood: 'Robinhood', elysium: 'Elysium', hyperevm: 'Hyperliquid' }[net], chain: CHAINS[net], t: p.created || Date.now() });
+    }
+  }
+  return out.filter(x => x.name);
+}
+const STOP = new Set('the,and,for,coin,token,official,meme,memes,inu,new,just,this,that,you,your,with,from,are,its,not,one,all,get,our,who,what,big,real,first,best,super,mega,baby,little,mini,king,lord,mr,mrs,sol,solana,bnb,base,eth,pump,fun,bonk,launch,community,cto,dev,ceo,based,degen,moon,gem,100x,1000x'.split(','));
+const wordsOf = s => [...new Set(String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-zÀ-ɏ一-鿿]+/).filter(w => w.length >= 3 && !STOP.has(w)))];
+// characters showing up in far more new launches than usual
+function launchpadSpikes(state, now) {
+  const recent = state.launches.filter(l => now - l.t < HOUR), before = state.launches.filter(l => now - l.t >= HOUR && now - l.t < 3 * HOUR);
+  const count = list => { const c = {}; for (const l of list) for (const w of wordsOf(`${l.name} ${l.symbol}`)) (c[w] ||= []).push(l); return c; };
+  const cur = count(recent), prev = count(before);
+  return Object.entries(cur).map(([w, ls]) => ({ w, n: ls.length, base: (prev[w]?.length || 0) / 2, ls }))
+    .filter(x => x.n >= 6 && x.n >= 3 * (x.base + 1)).sort((a, b) => b.n - a.n).slice(0, 12);
+}
+// sources that count as "crypto is talking about it"
+const isCryptoSrc = s => /^(TG @|Tree of Alpha|Crypto news|DexScreener)/.test(String(s || ''));
 async function dexMetas() {
   const j = await get('https://api.dexscreener.com/metas/trending/v1', true);
   return (Array.isArray(j) ? j : []).map(m => ({ name: m.name, mc: m.marketCap, ch1h: m.marketCapChange?.h1, ch24: m.marketCapChange?.h24, n: m.tokenCount }));
@@ -302,6 +345,8 @@ ${libraryText(lib)}
 ${lessonsText()}
 
 The patterns that win: viral animal with a name (MOODENG, PNUT, WIF, FIONA, PENGUIN); internet relic/meme character (TROLL, CHILLGUY, GIGA, POPCAT); object or moment from a huge event (GTA 6 trailer -> DACITY); celebrity/founder/brand/government post (BINANCELIFE, PENGUIN, SHRUB, SI); AI/tech news-jack (O, GOAT, FARTCOIN); self-aware joke (USELESS, FARTCOIN); chain lore (CASHCAT, ROBIN, Hypurr cats on Elysium); stock/brand corporate drama (MEME vs AMC).
+NEVER pick politics, elections, politicians, government, war or military news unless a coin about it is already trading.
+Prefer things CRYPTO people are already noticing: items from crypto sources (TG channels, Tree of Alpha, DexScreener new coins) count most.
 The patterns that lose: sports results, plain political news, deaths/tragedies/crime/disasters, holidays, regional celebrity gossip, TV drama plots, generic news with no character, things already old. Never pick tragedies, real private people or children.
 ${learningNotes(state)}
 Already sent recently (do NOT return these again, even under another name): ${recent.join('; ') || 'none'}
@@ -335,6 +380,7 @@ async function newsFilter(newsItems, lib) {
   const res = await geminiJSON(`You filter breaking news for someone who LAUNCHES meme coins on Solana (pump.fun), Robinhood Chain (Pons) and Elysium (Montra, Hyperliquid L2).
 Keep ONLY news that could change what they launch or when: a meme coin running or crashing hard; a new chain/launchpad/meme platform or big change to pump.fun, Pons, Montra, Hyperliquid, Robinhood Chain; a celebrity, brand, government or big account doing something with a coin or a meme; exchange listings of meme coins; a viral moment crypto twitter is already memeing; rules/hacks that hit meme coins.
 Drop: generic Bitcoin/ETH price moves, ETFs, macro, stocks, company earnings, adverts, giveaways, anything unrelated to meme coins.
+ALWAYS drop politics, elections, government, war, military, crime and disasters - UNLESS the story is directly about a meme coin (e.g. a president or government launching or posting a coin).
 Return JSON array (empty if none): [{"i": index, "why": "one short line: why this matters for launching a meme coin", "urgent": true/false}]
 ${list}`);
   if (!Array.isArray(res)) return null;
@@ -643,11 +689,13 @@ async function tick(state, lib, n) {
       (async () => { const o = []; for (const q of newsQ) { o.push(...await googleNews(q)); await sleep(400); } return o.filter(x => !x.started || now - x.started < 6 * HOUR); })(),
       due('wiki', HOUR) ? wikipedia() : [],
     ]),
-    Promise.all(TG_CHANNELS.map(c => tgChannel(c, state))),
+    Promise.all([...TG_CHANNELS.map(c => tgChannel(c, state)), treeOfAlpha(), dexProfiles()]),
   ]);
-  const tgPosts = tgLists.flat();
-  console.error('sources:', ['X', 'GoogleUS', 'GoogleGB', 'KYM', 'Bluesky', 'News', 'Wiki'].map((s, i) => `${s}=${viralLists[i].length}`).join(' '), `TG=${tgPosts.length}`);
-  const viral = [...viralLists.flat(), ...tgPosts].filter(c => c.title);
+  const toa = tgLists[TG_CHANNELS.length].filter(n => n.started && now - n.started < 2 * HOUR);
+  const profiles = tgLists[TG_CHANNELS.length + 1];
+  const tgPosts = tgLists.slice(0, TG_CHANNELS.length).flat();
+  console.error('sources:', ['X', 'GoogleUS', 'GoogleGB', 'KYM', 'Bluesky', 'News', 'Wiki'].map((s, i) => `${s}=${viralLists[i].length}`).join(' '), `TG=${tgPosts.length} TreeOfAlpha=${toa.length} NewCoins=${profiles.length}`);
+  const viral = [...viralLists.flat(), ...tgPosts, ...toa, ...profiles].filter(c => c.title);
 
   for (const c of viral) {
     const k = key(c.title); if (!k) continue;
@@ -664,7 +712,7 @@ async function tick(state, lib, n) {
   }
 
   // chain context (every 10 min)
-  if (due('chains', 10 * MIN) || !state.metas) {
+  if (due('chains', 15 * MIN) || !state.metas) {
     state.chainTop = {};
     for (const net of Object.keys(CHAINS)) {
       const seen = new Set();
@@ -683,15 +731,31 @@ async function tick(state, lib, n) {
   const picks = [];
   for (let i = 0; i < fresh.length; i += 120) {
     const chunk = fresh.slice(i, i + 120);
-    const r = await aiFilter(chunk, state.metas, state, lib);
+    const r = await aiFilter(chunk, state.metas + (state.padNow ? `
+WORDS SPIKING IN NEW LAUNCHES ON LAUNCHPADS RIGHT NOW (launches/hour): ${state.padNow}` : ''), state, lib);
     if (r === null) { console.error('AI failed for', chunk.length, 'items - retry next tick'); continue; }
     picks.push(...r); judgedOk.push(...chunk);
   }
-  const newPicks = picks.filter(p => !state.ideas[idOf(p.topic)] && p.fresh !== 'old').sort((a, b) => b.score - a.score);
+  // ideas still waiting for crypto to notice them (kept up to 12h, re-checked every tick)
+  const waiting = Object.values(state.pending).filter(x => now - x.at < 12 * HOUR).map(x => x.p);
+  const seenIds = new Set();
+  const newPicks = [...picks, ...waiting].filter(p => !state.ideas[idOf(p.topic)] && p.fresh !== 'old' && !seenIds.has(idOf(p.topic)) && seenIds.add(idOf(p.topic))).sort((a, b) => b.score - a.score);
   for (const p of newPicks) {
     const id = idOf(p.topic);
     const tr = state.trends[key(p.cand.title)] || {};
     const coins = (await findCoins(p.tickers, p.topic)).filter(isLive).sort((a, b) => (b.marketCap || b.fdv || 0) - (a.marketCap || a.fdv || 0));
+    // CRYPTO SIGNAL: only send if crypto pages are talking about it, or real coins for it are trading with volume
+    const words = [key(p.topic), ...p.tickers.map(key)].filter(w => w.length >= 4);
+    const mentions = new Set([p.cand.src, ...Object.entries(state.trends)
+      .filter(([k, t]) => now - t.last < DAY && words.some(w => k.includes(w))).flatMap(([, t]) => t.srcs)].filter(isCryptoSrc));
+    const trading = coins.filter(c => (c.volume?.h24 || 0) >= 10000 && c.pairCreatedAt && now - c.pairCreatedAt < 7 * DAY);
+    if (!mentions.size && !trading.length) {
+      const { cand, ...rest } = p;
+      state.pending[id] = { at: state.pending[id]?.at || now, p: { ...rest, cand: { title: cand.title, src: cand.src, link: cand.link, image: cand.image, started: cand.started } } };
+      continue;
+    }
+    delete state.pending[id];
+    const signal = [mentions.size ? `talked about by ${[...mentions].slice(0, 3).join(', ')}` : '', trading.length ? `${trading.length} coin${trading.length > 1 ? 's' : ''} already trading (vol ${money(trading.reduce((s, c) => s + (c.volume?.h24 || 0), 0))}/24h)` : ''].filter(Boolean).join(' · ');
     const recentBig = coins.find(c => c.pairCreatedAt && now - c.pairCreatedAt < 3 * DAY && (c.marketCap || c.fdv || 0) >= 300000);
     const taken = new Set(coins.map(c => `${symOf(c)}|${c.chainId}`));
     const open = p.tickers.map(t => ({ t, chains: Object.entries(CHAINS).filter(([id]) => !taken.has(`${t.toLowerCase()}|${id}`)).map(([, l]) => l) })).filter(o => o.chains.length);
@@ -703,7 +767,7 @@ async function tick(state, lib, n) {
     const icon = recentBig ? '⚠️' : loud ? '🚨' : p.score >= 8 ? '🔥' : '👀';
     const src = p.cand.link ? `<a href="${esc(p.cand.link)}">${esc(p.cand.src)}</a>` : esc(p.cand.src);
     let cap = head('💡 COIN IDEA', `${icon} ${p.score}/10 · ${badge}`) +
-      `<b>${esc(p.topic)}</b>\n${esc(p.why)}\n🧬 Like <b>$${esc(p.like)}</b> — ${esc(p.like_why)}\n\n`;
+      `🔗 <b>Crypto signal:</b> ${esc(signal)}\n\n<b>${esc(p.topic)}</b>\n${esc(p.why)}\n🧬 Like <b>$${esc(p.like)}</b> — ${esc(p.like_why)}\n\n`;
     if (coins.length) cap += `<b>Live coins already out:</b>\n${coins.slice(0, 3).map(coinLine).join('\n')}\n`;
     else cap += `<b>No live coin yet — you could be first.</b>\n`;
     if (open.length) cap += `<b>Open tickers:</b> ${open.map(o => `$${esc(o.t)} (${o.chains.join(' ')})`).join(' · ')}\n`;
@@ -728,8 +792,8 @@ async function tick(state, lib, n) {
   // --- 📰 crypto news as it comes out (RSS every 3 min + Telegram channel posts every tick) ---
   if (!failed) {
     const slow = due('rss', 3 * MIN);
-    const [rss, toa, lst] = await Promise.all([slow ? cryptoRss() : [], treeOfAlpha(), slow ? listings() : []]);
-    const newsNew = [...[...rss, ...toa, ...lst].filter(n => n.started && now - n.started < 2 * HOUR), ...tgPosts].filter(n => !state.news[key(n.title)]);
+    const [rss, lst] = await Promise.all([slow ? cryptoRss() : [], slow ? listings() : []]);
+    const newsNew = [...rss, ...toa, ...lst, ...tgPosts].filter(n => n.started && now - n.started < 2 * HOUR && !state.news[key(n.title)]);
     const kept = await newsFilter(newsNew, lib);
     if (kept !== null) {
       for (const n of kept) {
@@ -742,7 +806,7 @@ async function tick(state, lib, n) {
   }
 
   // --- 🔴 live movers (every 2 min) ---
-  if (!failed && due('movers', 2 * MIN)) {
+  if (!failed && due('movers', 3 * MIN)) {
     const cand = [];
     for (const net of Object.keys(CHAINS)) {
       for (const p of await chainTrending(net, '5m')) {
@@ -789,6 +853,36 @@ async function tick(state, lib, n) {
     if (!await sendText(d)) failed = true;
   }
 
+  // --- 🔥 launchpad radar: collect every new launch, alert when a character spikes ---
+  if (!failed) {
+    const feed = await launchpadFeed(due('pads', 2 * MIN));
+    const have = new Set(state.launches.map(l => l.k));
+    for (const l of feed) if (!have.has(l.k)) { have.add(l.k); state.launches.push({ k: l.k, t: Math.min(l.t, now), name: String(l.name).slice(0, 40), symbol: String(l.symbol).slice(0, 15), pad: l.pad, chain: l.chain }); }
+    state.launches = state.launches.filter(l => now - l.t < 3 * HOUR).slice(-6000);
+    state.padSince ||= now; // needs ~2h of history to know what 'normal' looks like before alerting
+    const spikes = now - state.padSince < 2 * HOUR ? [] : launchpadSpikes(state, now).filter(s => now - (state.padTrends[s.w] || 0) > 6 * HOUR);
+    if (spikes.length && due('padcheck', 5 * MIN)) {
+      const res = await geminiJSON(`These words suddenly appear in many NEW meme coin launches in the last hour (count now vs normal per hour), with example coin names.
+Keep only words that are a real CHARACTER, animal, person, meme, object or story people are launching coins about. Drop generic words (moon, pump, ai, cat or dog with no specific hook, chain names, filler words, numbers).
+${spikes.map((s, i) => `${i}. "${s.w}" — ${s.n} launches (normal ~${Math.round(s.base)}/h). Examples: ${s.ls.slice(0, 8).map(l => `${l.symbol} "${l.name}"`).join(', ')}`).join('\n')}
+Return JSON array: [{"i": index, "character": "short name", "why": "one line: what it is and why it is being launched now (say 'unclear' if you don't know)"}]`);
+      for (const r of Array.isArray(res) ? res : []) {
+        const s = spikes[r.i]; if (!s) continue;
+        state.padTrends[s.w] = now;
+        const pads = {}; for (const l of s.ls) pads[l.pad] = (pads[l.pad] || 0) + 1;
+        const live = (await dexSearch(s.w)).filter(p => CHAINS[p.chainId] && isLive(p) && p.pairCreatedAt && now - p.pairCreatedAt < 2 * DAY)
+          .sort((a, b) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0)).filter((p, i, a) => a.findIndex(q => q.baseToken.address === p.baseToken.address) === i).slice(0, 3);
+        const msg = head('🔥 LAUNCHPAD TREND', `${s.n} new coins in 1h`) +
+          `<b>${esc(r.character)}</b> — ${s.n} launches in the last hour (normally ~${Math.max(1, Math.round(s.base))}/h)\n${esc(r.why)}\n\n` +
+          `<b>Where:</b> ${Object.entries(pads).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(p)} ${n}`).join(' · ')}\n` +
+          `<b>Examples:</b> ${s.ls.slice(-6).map(l => `$${esc(l.symbol)}`).join(' ')}\n` +
+          (live.length ? `\n<b>Top live coins (last 2 days):</b>\n${live.map(coinLine).join('\n')}` : `\nNo coin with real volume yet.`);
+        if (!await sendText(msg, { loud: s.n >= 20 })) { failed = true; break; }
+      }
+    }
+    state.padNow = launchpadSpikes(state, now).slice(0, 8).map(s => `${s.w} ${s.n}/h`).join(', ');
+  }
+
   // --- 🎨 trending characters & art styles (every 2h, only if something changed) ---
   if (!failed && due('art', 2 * HOUR)) {
     const rep = await artTrends(state, now);
@@ -813,7 +907,9 @@ async function tick(state, lib, n) {
 async function main() {
   const start = Date.now();
   const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {};
-  for (const k of ['trends', 'ideas', 'news', 'judged', 'movers', 'tgSeen', 'due']) state[k] ||= {};
+  for (const k of ['trends', 'ideas', 'news', 'judged', 'movers', 'tgSeen', 'due', 'pending', 'padTrends']) state[k] ||= {};
+  if (!Array.isArray(state.launches)) state.launches = [];
+  for (const [x, v] of Object.entries(state.pending)) if (Date.now() - v.at > 12 * HOUR) delete state.pending[x];
   if (!Array.isArray(state.feedback)) state.feedback = [];
   const now = Date.now();
   for (const k of ['trends', 'news', 'judged', 'movers']) for (const [x, v] of Object.entries(state[k])) if (now - (v.last || v.first || v) > 3 * DAY) delete state[k][x];
@@ -834,5 +930,5 @@ async function main() {
 }
 
 // sources are exported so tools/check_sources.mjs can test them; the bot only runs when started directly
-export { get, xTrends, googleTrends, bingNews, googleNews, knowYourMeme, bluesky, wikipedia, tgChannel, chainTrending, cryptoRss, treeOfAlpha, listings, dexMetas, goplus, dexSearch, rugcheck, CHAINS, GECKO, TG_CHANNELS, NEWS_QUERIES };
+export { get, xTrends, googleTrends, bingNews, googleNews, knowYourMeme, bluesky, wikipedia, tgChannel, chainTrending, cryptoRss, treeOfAlpha, listings, dexMetas, goplus, launchpadFeed, launchpadSpikes, wordsOf, dexSearch, rugcheck, CHAINS, GECKO, TG_CHANNELS, NEWS_QUERIES };
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch(e => { console.error(e); process.exit(1); });
