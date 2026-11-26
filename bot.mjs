@@ -233,7 +233,7 @@ async function launchpadFeed(slowDue) {
   }
   return out.filter(x => x.name);
 }
-const STOP = new Set('the,and,for,coin,token,official,meme,memes,inu,new,just,this,that,you,your,with,from,are,its,not,one,all,get,our,who,what,big,real,first,best,super,mega,baby,little,mini,king,lord,mr,mrs,sol,solana,bnb,base,eth,pump,fun,bonk,launch,community,cto,dev,ceo,based,degen,moon,gem,100x,1000x'.split(','));
+const STOP = new Set('money,pair,crazy,cash,rich,happy,good,day,time,life,world,people,game,test,the,and,for,coin,token,official,meme,memes,inu,new,just,this,that,you,your,with,from,are,its,not,one,all,get,our,who,what,big,real,first,best,super,mega,baby,little,mini,king,lord,mr,mrs,sol,solana,bnb,base,eth,pump,fun,bonk,launch,community,cto,dev,ceo,based,degen,moon,gem,100x,1000x'.split(','));
 const wordsOf = s => [...new Set(String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-zÀ-ɏ一-鿿]+/).filter(w => w.length >= 3 && !STOP.has(w)))];
 // characters showing up in far more new launches than usual
 function launchpadSpikes(state, now) {
@@ -416,13 +416,16 @@ async function findCoins(tickers, topic) {
   const pairs = [];
   for (const q of [...new Set([...tickers, topic])]) pairs.push(...await dexSearch(q));
   const tks = tickers.map(t => t.toLowerCase());
-  const best = {};
+  const best = {}, first = {};
   for (const p of pairs) {
     if (!CHAINS[p.chainId]) continue;
     if (!tks.includes(symOf(p)) && key(p.baseToken.name) !== key(topic)) continue;
     const a = p.baseToken.address;
+    // remember when the COIN first traded (its oldest pool), not just this pool
+    first[a] = Math.min(first[a] || Infinity, p.pairCreatedAt || Infinity);
     if (!best[a] || (p.liquidity?.usd || 0) > (best[a].liquidity?.usd || 0)) best[a] = p;
   }
+  for (const [a, p] of Object.entries(best)) p.coinCreated = first[a] === Infinity ? p.pairCreatedAt : first[a];
   return Object.values(best);
 }
 const isLive = p => (p.liquidity?.usd || 0) >= 1000 && (p.volume?.h24 || 0) >= 1000;
@@ -482,7 +485,7 @@ async function tg(method, body, isForm = false) {
 }
 // copy of every message sent (kept in state.sentLog) so the output can be audited later
 const SENT = [];
-const logSent = (text, extra = '') => SENT.push({ t: Date.now(), msg: String(text).replace(/<[^>]+>/g, '').slice(0, 900) + extra });
+const logSent = (text, extra = '') => { const plain = String(text).replace(/<[^>]+>/g, ''); SENT.push({ t: Date.now(), type: plain.split('\n')[0].split(' · ')[0].trim(), msg: plain.slice(0, 900) + extra }); };
 async function sendText(text, { loud = false, markup } = {}) {
   logSent(text);
   if (printMode()) { console.log('\n' + text.replace(/<[^>]+>/g, '') + '\n'); return true; }
@@ -543,11 +546,92 @@ Rules: ONE character only, centered, on a plain solid-colour background. Simple 
 }
 
 // ---------- button presses ----------
+// ---------- typed commands ----------
+const COMMANDS = [
+  ['ideas', 'Coin ideas from the last 24h + where they are now'],
+  ['launchpad', 'Characters launching most on launchpads (1h vs 24h)'],
+  ['movers', 'Live movers from the last 24h + where they are now'],
+  ['news', 'News sent in the last 24h'],
+  ['race', 'Race alerts from the last 24h'],
+  ['spreading', 'Trends spreading in the last 24h'],
+  ['chains', 'Chain update right now (top coins + metas)'],
+  ['art', 'Trending characters & art styles right now'],
+  ['scorecard', 'Scorecard for the last 7 days'],
+  ['help', 'List of commands'],
+];
+async function handleCommand(text, state) {
+  const now = Date.now();
+  const cmd = text.trim().split(/[\s@]/)[0].slice(1).toLowerCase();
+  if (cmd === 'ideas' || cmd === 'coinideas' || cmd === 'coin') {
+    const list = Object.entries(state.ideas).filter(([, i]) => !i.mover && now - i.first < DAY).sort((a, b) => (b[1].score || 0) - (a[1].score || 0));
+    let msg = head('💡 COIN IDEAS · LAST 24H', `${list.length} sent`);
+    if (!list.length) msg += 'No ideas sent in the last 24 hours.\n';
+    for (const [, i] of list.slice(0, 15)) {
+      const coins = (await findCoins(i.tickers.slice(0, 1), i.topic)).filter(isLive).sort((a, b) => (b.marketCap || b.fdv || 0) - (a.marketCap || a.fdv || 0));
+      const best = coins[0];
+      msg += `\n<b>${i.score}/10 ${esc(i.topic)}</b> · ${ago(now - i.first)} ago · ${i.tickers.map(t => '$' + esc(t)).join(' ')}\n` +
+        (best ? `   Now: ${coins.length} live coin${coins.length > 1 ? 's' : ''} · best <b>$${esc(best.baseToken.symbol)}</b> ${CHAINS[best.chainId]} ${money(best.marketCap || best.fdv)} · vol24 ${money(best.volume?.h24)} · <a href="${esc(best.url)}">chart</a>\n` : `   Now: no live coin yet — still open\n`);
+    }
+    const waiting = Object.values(state.pending).filter(x => now - x.at < 12 * HOUR);
+    if (waiting.length) msg += `\n<b>👀 Watching (no crypto signal yet):</b>\n${waiting.slice(0, 10).map(x => `• ${x.p.score}/10 ${esc(x.p.topic)} — ${esc(x.p.why)}`).join('\n')}`;
+    return sendText(msg);
+  }
+  if (cmd === 'launchpad' || cmd === 'launchpads' || cmd === 'pads') {
+    const hk = new Date(now).toISOString().slice(0, 13);
+    const add = (acc, h) => { for (const [w, e] of Object.entries(h || {})) { const a = (acc[w] ||= { n: 0, p: {}, ex: [] }); a.n += e.n; for (const [p, n] of Object.entries(e.p)) a.p[p] = (a.p[p] || 0) + n; for (const x of e.ex) if (a.ex.length < 4 && !a.ex.includes(x)) a.ex.push(x); } return acc; };
+    const lastHour = launchpadSpikes(state, now);
+    const day = Object.values(state.padHours).reduce(add, {});
+    const hours = Object.keys(state.padHours).length || 1;
+    const fmt = ([w, e]) => `• <b>${esc(w)}</b> — ${e.n} launches · ${Object.entries(e.p).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([p, n]) => `${esc(p)} ${n}`).join(', ')} · ${e.ex.map(x => '$' + esc(x)).join(' ')}`;
+    const total = state.launches.filter(l => now - l.t < HOUR).length;
+    let msg = head('🔥 LAUNCHPAD TRENDS', `${total} new coins seen in the last hour`);
+    msg += `<b>Spiking in the last hour</b> (vs normal):\n${lastHour.length ? lastHour.slice(0, 10).map(s => `• <b>${esc(s.w)}</b> — ${s.n} launches (normal ~${Math.round(s.base)}/h) · ${s.ls.slice(-3).map(l => '$' + esc(l.symbol)).join(' ')}`).join('\n') : '• nothing spiking right now'}\n\n`;
+    msg += `<b>Most launched in the last ${Math.min(hours, 24)}h:</b>\n${Object.entries(day).sort((a, b) => b[1].n - a[1].n).slice(0, 15).map(fmt).join('\n') || '• not enough data yet'}`;
+    if (hours < 24) msg += `\n\n<i>(collecting since ${hours}h ago — full 24h view builds up over the day)</i>`;
+    return sendText(msg);
+  }
+  if (cmd === 'movers') {
+    const list = Object.values(state.ideas).filter(i => i.mover && now - i.first < DAY).sort((a, b) => b.first - a.first).slice(0, 12);
+    let msg = head('🪙 LIVE MOVERS · LAST 24H', `${list.length} sent`);
+    if (!list.length) msg += 'No movers sent in the last 24 hours.';
+    for (const i of list) {
+      let line = `\n<b>$${esc(i.topic)}</b> ${i.chain ? CHAIN_NAME[i.chain] || i.chain : ''} · sent ${ago(now - i.first)} ago at ${money(i.mc0)}`;
+      if (i.token && i.net) {
+        const j = await get(`https://api.dexscreener.com/tokens/v1/${i.net}/${i.token}`, true);
+        const p = (Array.isArray(j) ? j : []).sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
+        if (p) { const mc = p.marketCap || p.fdv || 0; line += ` → now ${money(mc)} (${i.mc0 ? pct((mc / i.mc0 - 1) * 100) : '?'}) · <a href="${esc(p.url)}">chart</a>`; }
+      }
+      msg += line + `\n   ${esc(i.why || '')}`;
+    }
+    return sendText(msg);
+  }
+  // replay of what was sent in the last 24h, by message type
+  const replay = { news: ['📰 NEWS', '📰 NEWS · LAST 24H'], race: ['🚨 RACE ALERT', '🚨 RACE ALERTS · LAST 24H'], spreading: ['📣 TREND SPREADING', '📣 TRENDS SPREADING · LAST 24H'] }[cmd];
+  if (replay) {
+    const list = (state.sentLog || []).filter(x => x.type === replay[0] && now - x.t < DAY).slice(-12).reverse();
+    return sendText(head(replay[1], `${list.length} sent`) + (list.map(x => `🕒 ${ago(now - x.t)} ago\n${esc(x.msg.split('\n').slice(2).join('\n').trim())}`).join('\n\n') || 'Nothing sent in the last 24 hours.'));
+  }
+  if (cmd === 'chains' || cmd === 'chain') return sendText(await chainDigest(state, 'right now'));
+  if (cmd === 'art' || cmd === 'characters') {
+    const rep = await artTrends(state, now, true);
+    return sendText(rep ? String(rep) : head('🎨 TRENDING CHARACTERS & ART') + 'Not enough data right now — try again in a few minutes.');
+  }
+  if (cmd === 'scorecard' || cmd === 'score') {
+    const sc = await weeklyScorecard(state, now);
+    return sendText(sc || head('📊 SCORECARD') + 'No ideas sent in the last 7 days yet.');
+  }
+  return sendText(head('🛰 COMMANDS') + COMMANDS.map(([c, d]) => `/${c} — ${d}`).join('\n'));
+}
+
 async function handleButtons(state) {
+  if (!state.cmdsSet && !printMode()) { if ((await tg('setMyCommands', { commands: COMMANDS.map(([command, description]) => ({ command, description })) }))?.ok) state.cmdsSet = 1; }
   if (printMode()) return;
   const u = await tg('getUpdates', { offset: state.tgOffset || 0, timeout: 0, allowed_updates: ['callback_query', 'message'] });
   for (const up of u?.result || []) {
     state.tgOffset = up.update_id + 1;
+    // typed commands: /ideas /launchpad /movers /news /help
+    const m = up.message;
+    if (m?.text?.startsWith('/') && String(m.chat?.id) === String(CHAT())) { await handleCommand(m.text, state); continue; }
     const cq = up.callback_query;
     if (!cq || String(cq.message?.chat?.id) !== String(CHAT())) continue;
     const [act, id] = String(cq.data).split(':');
@@ -585,7 +669,7 @@ async function raceWatch(state, now) {
     idea.seenPairs ||= []; idea.raceAlerts ||= 0;
     for (const p of coins) {
       const mc = p.marketCap || p.fdv || 0;
-      if (!p.pairCreatedAt || p.pairCreatedAt < idea.first - 10 * MIN) continue;
+      if (!p.coinCreated || p.coinCreated < idea.first - 10 * MIN) continue; // coin existed before the idea
       // ignore dead junk tokens (no liquidity, no volume) - they can still count later if they come alive
       if ((p.liquidity?.usd || 0) < 2000 && (p.volume?.h24 || 0) < 2000) continue;
       if (mc > (idea.bestMc || 0)) { idea.bestMc = mc; idea.bestUrl = p.url; idea.bestChain = CHAINS[p.chainId]; }
@@ -622,8 +706,21 @@ ${Object.entries(byScore).map(([s, v]) => `${s}/10: ${v.n} / ${v.big}`).join('\n
 ${top.map(i => `• ${esc(i.topic)}: ${money(i.bestMc)} on ${i.bestChain} · <a href="${esc(i.bestUrl)}">chart</a>`).join('\n') || 'none yet'}`;
 }
 
+// ---------- 📈 chain update message ----------
+async function chainDigest(state, sub) {
+    const top = state.chainTop || {};
+    const themes = await geminiJSON(`Trending meme coins right now per chain:\n${state.metas}\nIn max 3 short lines, what themes/metas are forming on each chain (e.g. "hippo coins", "slash tickers", "stock-paired memes")? Only say what is visible in the list. Return JSON: {"lines": ["..."]}`);
+    let d = head('📈 CHAIN UPDATE', sub) +
+      Object.entries(top).map(([n, l]) => `<b>${CHAIN_NAME[n] || n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${chg(x)}`).join(', ') || 'no data')).join('\n');
+    const lines = (Array.isArray(themes) ? themes : themes?.lines || []).map(l => typeof l === 'string' ? l : Object.values(l || {}).join(': ')).filter(l => l && l.trim());
+    if (lines.length) d += `\n\n<b>🧭 Metas forming:</b>\n${lines.map(l => '• ' + esc(l)).join('\n')}`;
+    const hot = (state.dexMetas || []).filter(m => m.ch1h != null).sort((a, b) => (b.ch1h || 0) - (a.ch1h || 0)).slice(0, 6);
+    if (hot.length) d += `\n\n<b>🔥 Hottest meme categories (DexScreener):</b>\n${hot.map(m => `• ${esc(m.name)} — ${money(m.mc)} · 1h ${pct(m.ch1h)} · 24h ${pct(m.ch24)} · ${m.n} coins`).join('\n')}`;
+  return d;
+}
+
 // ---------- 🎨 what characters and art styles are trending ----------
-async function artTrends(state, now) {
+async function artTrends(state, now, force = false) {
   const coins = Object.entries(state.chainTop || {}).flatMap(([c, l]) => l.map(x => ({ ...x, chain: c })));
   const movers = Object.values(state.ideas).filter(i => i.mover && now - i.first < 6 * HOUR).map(i => `$${i.topic}: ${i.why}`);
   const ideas = Object.values(state.ideas).filter(i => !i.mover && now - i.first < 12 * HOUR).map(i => i.topic);
@@ -664,7 +761,7 @@ Return JSON: {"characters": [{"name": "...", "examples": ["TICKER", ...], "note"
   const chars = j.characters || [], art = j.art || [];
   if (!chars.length && !art.length) return null;
   const sig = [...chars.map(c => key(c.name)), '|', ...art.map(a => key(a.style))].join(',');
-  if (sig === state.lastArt) return null; // nothing changed since last report
+  if (sig === state.lastArt && !force) return null; // nothing changed since last report
   const msg = new String(head('🎨 TRENDING CHARACTERS & ART') +
     `<b>Characters:</b>\n${chars.map(c => `• <b>${esc(c.name)}</b> — ${(c.examples || []).map(t => '$' + esc(String(t).replace(/^\$+/, ''))).join(' ')}${c.note ? ' · ' + esc(c.note) : ''}`).join('\n') || '• nothing clear'}\n\n` +
     `<b>Art styles:</b>\n${art.map(a => `• <b>${esc(a.style)}</b> — ${(a.examples || []).map(t => '$' + esc(String(t).replace(/^\$+/, ''))).join(' ')}${a.note ? ' · ' + esc(a.note) : ''}`).join('\n') || '• nothing clear'}` +
@@ -753,7 +850,7 @@ WORDS SPIKING IN NEW LAUNCHES ON LAUNCHPADS RIGHT NOW (launches/hour): ${state.p
     const words = [key(p.topic), ...p.tickers.map(key)].filter(w => w.length >= 4);
     const mentions = new Set([p.cand.src, ...Object.entries(state.trends)
       .filter(([k, t]) => now - t.last < DAY && words.some(w => k.includes(w))).flatMap(([, t]) => t.srcs)].filter(isCryptoSrc));
-    const trading = coins.filter(c => (c.volume?.h24 || 0) >= 10000 && c.pairCreatedAt && now - c.pairCreatedAt < 7 * DAY);
+    const trading = coins.filter(c => (c.volume?.h24 || 0) >= 10000 && c.coinCreated && now - c.coinCreated < 7 * DAY);
     if (!mentions.size && !trading.length) {
       const { cand, ...rest } = p;
       state.pending[id] = { at: state.pending[id]?.at || now, p: { ...rest, cand: { title: cand.title, src: cand.src, link: cand.link, image: cand.image, started: cand.started } } };
@@ -761,7 +858,7 @@ WORDS SPIKING IN NEW LAUNCHES ON LAUNCHPADS RIGHT NOW (launches/hour): ${state.p
     }
     delete state.pending[id];
     const signal = [mentions.size ? `talked about by ${[...mentions].slice(0, 3).join(', ')}` : '', trading.length ? `${trading.length} coin${trading.length > 1 ? 's' : ''} already trading (vol ${money(trading.reduce((s, c) => s + (c.volume?.h24 || 0), 0))}/24h)` : ''].filter(Boolean).join(' · ');
-    const recentBig = coins.find(c => c.pairCreatedAt && now - c.pairCreatedAt < 3 * DAY && (c.marketCap || c.fdv || 0) >= 300000);
+    const recentBig = coins.find(c => c.coinCreated && now - c.coinCreated < 3 * DAY && (c.marketCap || c.fdv || 0) >= 300000);
     const taken = new Set(coins.map(c => `${symOf(c)}|${c.chainId}`));
     const open = p.tickers.map(t => ({ t, chains: Object.entries(CHAINS).filter(([id]) => !taken.has(`${t.toLowerCase()}|${id}`)).map(([, l]) => l) })).filter(o => o.chains.length);
     const firstSeen = Math.min(tr.first || now, p.cand.started || now);
@@ -832,7 +929,7 @@ WORDS SPIKING IN NEW LAUNCHES ON LAUNCHPADS RIGHT NOW (launches/hour): ${state.p
           `<b>$${esc(m.name)}</b> · ${ago(now - m.created)} old\n${esc(m.meme)}\n🧬 Like <b>$${esc(m.like)}</b>\n` +
           `mc ${money(m.mc)} · liq ${money(m.liq)} · 1h vol ${money(m.vol1h)} · 1h ${pct(m.ch1h)}\n1h: ${m.buys1h} buys / ${m.sells1h} sells\n` +
           (safety ? safety + '\n' : '') + `<a href="${m.link}">chart</a> · <code>${esc(m.token)}</code>`;
-        state.ideas[id] = { first: now, topic: m.name, tickers: [m.name], why: m.meme, mover: true, score: m.score, src: 'Live mover' };
+        state.ideas[id] = { first: now, topic: m.name, tickers: [m.name], why: m.meme, mover: true, score: m.score, src: 'Live mover', token: m.token, net: m.net, chain: m.chain, mc0: m.mc };
         if (!await sendText(msg, { loud: m.score >= LOUD_SCORE, markup: rateButtons(id) })) { failed = true; break; }
       }
     }
@@ -847,22 +944,30 @@ WORDS SPIKING IN NEW LAUNCHES ON LAUNCHPADS RIGHT NOW (launches/hour): ${state.p
   const newInTop = topNames.filter(n => !(state.lastTop || []).includes(n));
   if (!failed && newInTop.length >= 2 && (FORCE || now - (state.due.digest || 0) >= 30 * MIN)) {
     state.due.digest = now; state.lastTop = topNames;
-    const top = state.chainTop || {};
-    const themes = await geminiJSON(`Trending meme coins right now per chain:\n${state.metas}\nIn max 3 short lines, what themes/metas are forming on each chain (e.g. "hippo coins", "slash tickers", "stock-paired memes")? Only say what is visible in the list. Return JSON: {"lines": ["..."]}`);
-    let d = head('📈 CHAIN UPDATE', `${newInTop.length} new in the top lists`) +
-      Object.entries(top).map(([n, l]) => `<b>${CHAIN_NAME[n] || n}:</b> ` + ((l || []).slice(0, 5).map(x => `<a href="${x.link}">${esc(x.name)}</a> ${money(x.mc)} ${chg(x)}`).join(', ') || 'no data')).join('\n');
-    const lines = (Array.isArray(themes) ? themes : themes?.lines || []).map(l => typeof l === 'string' ? l : Object.values(l || {}).join(': ')).filter(l => l && l.trim());
-    if (lines.length) d += `\n\n<b>🧭 Metas forming:</b>\n${lines.map(l => '• ' + esc(l)).join('\n')}`;
-    const hot = (state.dexMetas || []).filter(m => m.ch1h != null).sort((a, b) => (b.ch1h || 0) - (a.ch1h || 0)).slice(0, 6);
-    if (hot.length) d += `\n\n<b>🔥 Hottest meme categories (DexScreener):</b>\n${hot.map(m => `• ${esc(m.name)} — ${money(m.mc)} · 1h ${pct(m.ch1h)} · 24h ${pct(m.ch24)} · ${m.n} coins`).join('\n')}`;
-    if (!await sendText(d)) failed = true;
+    if (!await sendText(await chainDigest(state, `${newInTop.length} new in the top lists`))) failed = true;
   }
 
   // --- 🔥 launchpad radar: collect every new launch, alert when a character spikes ---
   if (!failed) {
     const feed = await launchpadFeed(due('pads', 2 * MIN));
     const have = new Set(state.launches.map(l => l.k));
-    for (const l of feed) if (!have.has(l.k)) { have.add(l.k); state.launches.push({ k: l.k, t: Math.min(l.t, now), name: String(l.name).slice(0, 40), symbol: String(l.symbol).slice(0, 15), pad: l.pad, chain: l.chain }); }
+    for (const l of feed) if (!have.has(l.k)) {
+      have.add(l.k);
+      state.launches.push({ k: l.k, t: Math.min(l.t, now), name: String(l.name).slice(0, 40), symbol: String(l.symbol).slice(0, 15), pad: l.pad, chain: l.chain });
+      // hourly word counts kept for 24h (for /launchpad)
+      const hk = new Date(now).toISOString().slice(0, 13);
+      const hour = (state.padHours[hk] ||= {});
+      for (const w of wordsOf(`${l.name} ${l.symbol}`)) {
+        const e = (hour[w] ||= { n: 0, p: {}, ex: [] });
+        e.n++; e.p[l.pad] = (e.p[l.pad] || 0) + 1;
+        if (e.ex.length < 3 && !e.ex.includes(l.symbol)) e.ex.push(String(l.symbol).slice(0, 15));
+      }
+    }
+    for (const hk of Object.keys(state.padHours)) {
+      if (now - Date.parse(hk + ':00:00Z') > 25 * HOUR) { delete state.padHours[hk]; continue; }
+      const ws = Object.entries(state.padHours[hk]);
+      if (ws.length > 400 && hk !== new Date(now).toISOString().slice(0, 13)) state.padHours[hk] = Object.fromEntries(ws.sort((a, b) => b[1].n - a[1].n).slice(0, 400));
+    }
     state.launches = state.launches.filter(l => now - l.t < 3 * HOUR).slice(-6000);
     state.padSince ||= now; // needs ~2h of history to know what 'normal' looks like before alerting
     const spikes = now - state.padSince < 2 * HOUR ? [] : launchpadSpikes(state, now).filter(s => now - (state.padTrends[s.w] || 0) > 6 * HOUR);
@@ -903,7 +1008,7 @@ Return JSON array: [{"i": index, "character": "short name", "why": "one line: wh
   state.lastScorecard ||= now;
 
   if (!failed) for (const c of judgedOk) state.judged[key(c.title)] = now;
-  state.sentLog = [...(state.sentLog || []), ...SENT.splice(0)].slice(-150);
+  state.sentLog = [...(state.sentLog || []), ...SENT.splice(0)].slice(-300);
   save();
   console.error(`tick ${n}: ${viral.length} items, ${fresh.length} new, ${newPicks.length} ideas${failed ? ', TELEGRAM FAILED' : ''}`);
   return !failed;
@@ -913,7 +1018,9 @@ Return JSON array: [{"i": index, "character": "short name", "why": "one line: wh
 async function main() {
   const start = Date.now();
   const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {};
-  for (const k of ['trends', 'ideas', 'news', 'judged', 'movers', 'tgSeen', 'due', 'pending', 'padTrends']) state[k] ||= {};
+  for (const k of ['trends', 'ideas', 'news', 'judged', 'movers', 'tgSeen', 'due', 'pending', 'padTrends', 'padHours']) state[k] ||= {};
+  if (!state.raceFix) { for (const i of Object.values(state.ideas)) { delete i.bestMc; delete i.bestUrl; delete i.bestChain; i.coins = 0; i.seenPairs = []; i.raceAlerts = 3; i.lastRace = 0; } state.raceFix = 1; }
+  if (state.cmdsVersion !== COMMANDS.length) { state.cmdsSet = 0; state.cmdsVersion = COMMANDS.length; } // re-send the menu when commands change
   if (!Array.isArray(state.launches)) state.launches = [];
   for (const [x, v] of Object.entries(state.pending)) if (Date.now() - v.at > 12 * HOUR) delete state.pending[x];
   if (!Array.isArray(state.feedback)) state.feedback = [];
@@ -936,5 +1043,5 @@ async function main() {
 }
 
 // sources are exported so tools/check_sources.mjs can test them; the bot only runs when started directly
-export { get, xTrends, googleTrends, bingNews, googleNews, knowYourMeme, bluesky, wikipedia, tgChannel, chainTrending, cryptoRss, treeOfAlpha, listings, dexMetas, goplus, launchpadFeed, launchpadSpikes, wordsOf, dexSearch, rugcheck, CHAINS, GECKO, TG_CHANNELS, NEWS_QUERIES };
+export { handleCommand, get, xTrends, googleTrends, bingNews, googleNews, knowYourMeme, bluesky, wikipedia, tgChannel, chainTrending, cryptoRss, treeOfAlpha, listings, dexMetas, goplus, launchpadFeed, launchpadSpikes, wordsOf, dexSearch, rugcheck, CHAINS, GECKO, TG_CHANNELS, NEWS_QUERIES };
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch(e => { console.error(e); process.exit(1); });
