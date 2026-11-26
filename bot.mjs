@@ -39,6 +39,7 @@ const DEFAULT_CHANNELS = [
   'binance_announcements', 'hyperliquid_announcements',                      // listings
   'LookOnChainChannel',                                                      // on-chain / whales
   'memecoins', 'pumpfun',                                                    // meme coin scene
+  'disclosetv', 'insiderpaper',                                              // breaking political + viral world news
 ].join(',');
 const TG_CHANNELS = (process.env.TG_CHANNELS || DEFAULT_CHANNELS).split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -345,7 +346,7 @@ ${libraryText(lib)}
 ${lessonsText()}
 
 The patterns that win: viral animal with a name (MOODENG, PNUT, WIF, FIONA, PENGUIN); internet relic/meme character (TROLL, CHILLGUY, GIGA, POPCAT); object or moment from a huge event (GTA 6 trailer -> DACITY); celebrity/founder/brand/government post (BINANCELIFE, PENGUIN, SHRUB, SI); AI/tech news-jack (O, GOAT, FARTCOIN); self-aware joke (USELESS, FARTCOIN); chain lore (CASHCAT, ROBIN, Hypurr cats on Elysium); stock/brand corporate drama (MEME vs AMC).
-NEVER pick politics, elections, politicians, government, war or military news unless a coin about it is already trading.
+Political moments CAN be great coins (TRUMP, MAGA, DOGE dept, SI "super intelligence", PENGUIN White House post, BODEN, TREMP): pick them when there is a memeable phrase, nickname, animal, object or viral clip. Skip routine policy and war/tragedy news.
 Prefer things CRYPTO people are already noticing: items from crypto sources (TG channels, Tree of Alpha, DexScreener new coins) count most.
 The patterns that lose: sports results, plain political news, deaths/tragedies/crime/disasters, holidays, regional celebrity gossip, TV drama plots, generic news with no character, things already old. Never pick tragedies, real private people or children.
 ${learningNotes(state)}
@@ -380,7 +381,7 @@ async function newsFilter(newsItems, lib) {
   const res = await geminiJSON(`You filter breaking news for someone who LAUNCHES meme coins on Solana (pump.fun), Robinhood Chain (Pons) and Elysium (Montra, Hyperliquid L2).
 Keep ONLY news that could change what they launch or when: a meme coin running or crashing hard; a new chain/launchpad/meme platform or big change to pump.fun, Pons, Montra, Hyperliquid, Robinhood Chain; a celebrity, brand, government or big account doing something with a coin or a meme; exchange listings of meme coins; a viral moment crypto twitter is already memeing; rules/hacks that hit meme coins.
 Drop: generic Bitcoin/ETH price moves, ETFs, macro, stocks, company earnings, adverts, giveaways, anything unrelated to meme coins.
-ALWAYS drop politics, elections, government, war, military, crime and disasters - UNLESS the story is directly about a meme coin (e.g. a president or government launching or posting a coin).
+ALSO KEEP big POLITICAL news (presidents, elections, major government moves, big political moments and viral political clips) - political moments and politicians are a major source of meme coins (TRUMP, MAGA, DOGE, SI, BODEN, TREMP). Say in "why" how it could turn into a meme coin or move crypto. Drop small local politics, routine policy and war casualty reports.
 Return JSON array (empty if none): [{"i": index, "why": "one short line: why this matters for launching a meme coin", "urgent": true/false}]
 ${list}`);
   if (!Array.isArray(res)) return null;
