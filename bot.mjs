@@ -528,7 +528,12 @@ async function tick(state, lib, n) {
     if (!t.srcs.includes(c.src)) t.srcs.push(c.src);
   }
   const fresh = []; const dup = new Set();
-  for (const c of viral) { const k = key(c.title); if (!k || state.judged[k] || dup.has(k)) continue; dup.add(k); fresh.push(c); }
+  for (const c of viral) {
+    const k = key(c.title); if (!k || state.judged[k] || dup.has(k)) continue;
+    dup.add(k);
+    if (c.started && now - c.started > 12 * HOUR) { state.judged[k] = now; continue; } // only NEW stories
+    fresh.push(c);
+  }
 
   // chain context (every 10 min)
   if (due('chains', 10 * MIN) || !state.metas) {
@@ -546,7 +551,7 @@ async function tick(state, lib, n) {
     if (r === null) { console.error('AI failed for', chunk.length, 'items - retry next tick'); continue; }
     picks.push(...r); judgedOk.push(...chunk);
   }
-  const newPicks = picks.filter(p => !state.ideas[idOf(p.topic)]).sort((a, b) => b.score - a.score);
+  const newPicks = picks.filter(p => !state.ideas[idOf(p.topic)] && p.fresh !== 'old').sort((a, b) => b.score - a.score);
   for (const p of newPicks) {
     const id = idOf(p.topic);
     const tr = state.trends[key(p.cand.title)] || {};
@@ -586,7 +591,7 @@ async function tick(state, lib, n) {
   // --- 📰 crypto news as it comes out (RSS every 3 min + Telegram channel posts every tick) ---
   if (!failed) {
     const rss = due('rss', 3 * MIN) ? await cryptoRss() : [];
-    const newsNew = [...rss.filter(n => !n.started || now - n.started < 6 * HOUR), ...tgPosts].filter(n => !state.news[key(n.title)]);
+    const newsNew = [...rss.filter(n => n.started && now - n.started < 2 * HOUR), ...tgPosts].filter(n => !state.news[key(n.title)]);
     const kept = await newsFilter(newsNew, lib);
     if (kept !== null) {
       for (const n of kept) {
@@ -629,7 +634,11 @@ async function tick(state, lib, n) {
   if (!failed && due('race', 5 * MIN)) for (const a of await raceWatch(state, now)) if (!await sendText(a, { loud: true })) { failed = true; break; }
 
   // --- hourly chain + metas digest ---
-  if (!failed && due('digest', HOUR)) {
+  // only when at least 2 coins are new to the top lists since the last update
+  const topNames = Object.values(state.chainTop || {}).flat().map(x => `${x.chain}:${x.name}`);
+  const newInTop = topNames.filter(n => !(state.lastTop || []).includes(n));
+  if (!failed && newInTop.length >= 2 && (FORCE || now - (state.due.digest || 0) >= 30 * MIN)) {
+    state.due.digest = now; state.lastTop = topNames;
     const top = state.chainTop || {};
     const themes = await geminiJSON(`Trending meme coins right now per chain:\n${state.metas}\nIn max 3 short lines, what themes/metas are forming on each chain (e.g. "hippo coins", "slash tickers", "stock-paired memes")? Only say what is visible in the list. Return JSON: {"lines": ["..."]}`);
     let d = `<b>📈 Chains — ${new Date(now).toISOString().slice(11, 16)} UTC</b>\n` +
